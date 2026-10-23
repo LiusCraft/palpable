@@ -5,8 +5,9 @@
 - 传输：WebSocket，端点 `/ws`。文本帧为 JSON，二进制帧为 Opus 音频（16kHz、单声道、60ms 一帧）。
 - 握手：设备连接后 10 秒内必须发送 `hello`；服务端回 `hello.ack`。同一 `device_id` 同时只允许一条连接。
 - 身份：`hello.device_id` 是设备 MAC（小写、冒号分隔），也是设备在灵矽侧的 `Device-Id`；可选的 `skin` 是皮套款式，服务端据此选风格智能体。
-- 上行类型：`hello`、`wake`、`mic.state`、`proximity`、`location`。
-- 下行类型：`hello.ack`、`audio.downlink`、`light`、`haptic`、`sound`、`speaker.state`、`presence`、`error`。
+- 上行类型：`hello`、`wake`、`mic.state`、`proximity`、`location`、`mcp`。
+- 下行类型：`hello.ack`、`audio.downlink`、`light`、`haptic`、`sound`、`speaker.state`、`presence`、`channel.state`、`friend.state`、`mcp`、`error`。
+- `mcp` 双向，`payload` 为 JSON-RPC 2.0；设备在 `capabilities` 里声明 `mcp` 才会收到。
 - 音频参数：上行固定 Opus、16kHz、单声道、60ms；下行以 `audio.downlink` 为准（灵矽的 TTS 可能是 24kHz），该消息在 AI 通道就绪后发送，早于任何下行音频帧。设备必须按它配置解码器，收到前按 16kHz / 60ms 处理。
 - 未知字段、未知类型、超出范围的值一律返回 `error`（`bad_message`），连接保持。
 

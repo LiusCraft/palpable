@@ -657,10 +657,6 @@ func Encode(msg Message) ([]byte, error)
 
 | 方向 | 消息 | 变更 | 用途 | 任务 |
 | --- | --- | --- | --- | --- |
-| 上行 / 下行 | `mcp` | 新增，`payload` 为 JSON-RPC | 设备端 MCP | S7 |
-| 下行 | `channel.state` | 新增：`name` `color` `event`（joined / switched / left） | 入群、切群的灯色与提示 | S4 |
-| 下行 | `friend.state` | 新增：`event`（pending / confirmed / removed） `device_id` `name` | 成为好友的振动与提示 | S3 |
-| 下行 | `sound` | `name` 增加 `busy` | 占线提示 | S5 |
 | 下行 | `speaker.state` | 可选 `from_kind`（device / agent） | 预留：智能体入频道时才加 | — |
 
 **依赖** 无。
