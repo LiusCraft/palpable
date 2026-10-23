@@ -24,6 +24,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/linxapi"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 	"github.com/LiusCraft/palpable/server/internal/relation"
+	"github.com/LiusCraft/palpable/server/internal/share"
 	"github.com/LiusCraft/palpable/server/internal/store"
 	"github.com/LiusCraft/palpable/server/internal/voice"
 	"github.com/LiusCraft/palpable/server/internal/zone"
@@ -123,7 +124,11 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		return p.AgentID, err
 	})
 	a.mcp = mcp.New(a.toLinx, a.toDevice, a.hasMCP)
-	for _, t := range mcp.BusinessTools(mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel}) {
+	services := mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel}
+	if d.ai != nil {
+		services.Share = share.New(chans, rel, d.ai, a.history, a.dollName)
+	}
+	for _, t := range mcp.BusinessTools(services) {
 		a.mcp.Register(t)
 	}
 	if d.ai != nil {

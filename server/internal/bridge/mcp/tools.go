@@ -11,6 +11,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/device"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/relation"
+	"github.com/LiusCraft/palpable/server/internal/share"
 	"github.com/LiusCraft/palpable/server/internal/zone"
 )
 
@@ -39,11 +40,16 @@ type Relations interface {
 	FilterFriends(ctx context.Context, viewer id.ParticipantID, ps []id.ParticipantID) []id.ParticipantID
 }
 
+type Sharer interface {
+	Publish(ctx context.Context, from id.DeviceID, description string) (int, error)
+}
+
 type Services struct {
 	Devices   Devices
 	Zones     Zones
 	Channels  Channels
 	Relations Relations
+	Share     Sharer // 可为 nil
 }
 
 func schema(props string, required ...string) json.RawMessage {
@@ -65,6 +71,40 @@ func fail(text string) (ToolResult, error) { return ToolResult{Text: text, IsErr
 
 // BusinessTools 返回服务端执行的业务工具。
 func BusinessTools(s Services) []Tool {
+	tools := baseTools(s)
+	if s.Share != nil {
+		tools = append(tools, shareTool(s.Share))
+	}
+	return tools
+}
+
+func shareTool(sh Sharer) Tool {
+	return Tool{
+		Name:        "self.share.publish",
+		Description: "把你看到的画面用一两句话讲给频道里的好朋友听，小朋友自己也会听到。先用 self.camera.take_photo 看一看，再把简短、开心的描述传进来；描述里不要有人的长相、名字、地址、学校等信息。",
+		InputSchema: schema(`{"description":{"type":"string","description":"一两句话的画面描述"}}`, "description"),
+		Call: func(ctx context.Context, d id.DeviceID, args json.RawMessage) (ToolResult, error) {
+			var a struct {
+				Description string `json:"description"`
+			}
+			_ = json.Unmarshal(args, &a)
+			n, err := sh.Publish(ctx, d, a.Description)
+			switch {
+			case errors.Is(err, share.ErrNotInChannel):
+				return fail("要先和好朋友在同一个频道里，才能分享哦。")
+			case errors.Is(err, share.ErrEmpty):
+				return fail("先看一看画面，再说说看到了什么吧。")
+			case err != nil:
+				return ToolResult{}, err
+			case n == 0:
+				return ok("分享好啦，不过现在频道里还没有好朋友在听。")
+			}
+			return ok(fmt.Sprintf("分享好啦，%d 位好朋友都听到了。", n))
+		},
+	}
+}
+
+func baseTools(s Services) []Tool {
 	return []Tool{
 		{
 			Name:        "self.profile.set_names",
