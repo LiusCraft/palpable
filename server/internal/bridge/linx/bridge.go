@@ -1,22 +1,26 @@
 // Package linx 把设备的 AI 对话桥接到灵矽（xrobotd/linxd）。
 //
-// 每台设备在灵矽侧对应一条独立的 WebSocket 会话；凭证只存在服务端。
+// 每台已开通的设备在灵矽侧对应一条独立的 WebSocket 会话；凭证只存在服务端。
 // 灵矽协议见 xrobotd 的 linxdv0/internal/protocol：hello 握手后发 listen 开始收音，
 // 灵矽用 stt / llm / tts 文本消息和 Opus 二进制帧回应。
+// 音频要不要给 AI 由 voice 决定，这里只管会话本身。
 package linx
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 
-	"github.com/LiusCraft/palpable/server/internal/gateway"
+	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 )
 
@@ -24,142 +28,299 @@ const (
 	dialTimeout  = 8 * time.Second
 	writeTimeout = 5 * time.Second
 	readLimit    = 1 << 20
+	outQueue     = 32 // 每条会话的上行队列；满了丢音频帧，不阻塞调用方
+
+	// 连上后稳定这么久，下次断线从最短退避重新算。
+	stableAfter = 30 * time.Second
 )
 
-// Config 由 app 从 config.Linx 映射而来。
-type Config struct {
-	URL     string // 例如 wss://xrobo-io.qiniuapi.com/v1/ws/
-	Token   string // Bearer 令牌
-	AgentID string // 可选，经 X-Agent-ID 指定智能体；为空时用设备在平台上绑定的智能体
+var (
+	ErrUnavailable = errors.New("linx: session unavailable")
+	ErrAlreadyOpen = errors.New("linx: session already open")
+)
+
+// DeviceLink 是设备侧连接，由 gateway.Session 满足。
+type DeviceLink interface {
+	DeviceID() id.DeviceID
+	Send(msg protocol.Message) error
+	SendAudio(frame []byte) error
+	Context() context.Context
 }
 
-// Bridge 实现 gateway.Handler：为每台设备维护一条灵矽会话。
+// Config 来自 YAML 配置；智能体 ID 取自设备档案（见 Persona）。
+type Config struct {
+	URL   string // 例如 wss://xrobo-io.qiniuapi.com/v1/ws/
+	Token string // Bearer 令牌
+}
+
+// Persona 是开一条会话所需的档案片段，由 app 从设备档案映射，bridge 因此不依赖 device。
+type Persona struct {
+	AgentID   string // 经 X-Agent-ID 指定；为空时用灵矽平台上该 MAC 已绑定的智能体
+	DollName  string
+	KidName   string
+	VoiceStep bool // 仅引导智能体：本次是否做声音登记
+}
+
+type AIState int
+
+const (
+	AIIdle AIState = iota
+	AISpeaking
+)
+
+// Bridge 为每台设备维护一条灵矽会话，断线后指数退避重连，设备断开即停止。
 type Bridge struct {
 	cfg    Config
 	dialer *websocket.Dialer
+	links  sync.Map // id.DeviceID -> *link；Forward 是热路径，读不加锁
 
-	mu    sync.Mutex
-	links map[string]*link // session id -> link
+	onAIState atomic.Pointer[func(id.DeviceID, AIState)]
+
+	backoffMin, backoffMax time.Duration
 }
 
 func New(cfg Config) *Bridge {
 	return &Bridge{
-		cfg:    cfg,
-		dialer: &websocket.Dialer{HandshakeTimeout: dialTimeout},
-		links:  make(map[string]*link),
+		cfg:        cfg,
+		dialer:     &websocket.Dialer{HandshakeTimeout: dialTimeout},
+		backoffMin: time.Second,
+		backoffMax: 30 * time.Second,
 	}
 }
 
-var _ gateway.Handler = (*Bridge)(nil)
+// OnAIState 注册 AI 说话状态的回调；回调在会话读循环里调用，不得阻塞。
+func (b *Bridge) OnAIState(fn func(d id.DeviceID, s AIState)) { b.onAIState.Store(&fn) }
 
-func (b *Bridge) OnConnect(s *gateway.Session) {
-	ctx, cancel := context.WithCancel(s.Context())
-	l := &link{b: b, dev: s, ctx: ctx, cancel: cancel}
-
-	b.mu.Lock()
-	b.links[s.ID()] = l
-	b.mu.Unlock()
-
-	// 拨号放到后台，不阻塞设备读循环；就绪前的音频帧直接丢弃。
+// Open 为设备开一条会话并在后台连接；会话随 dev.Context() 结束。
+// 交棒换智能体时先 Close 再用新的 Persona Open。
+func (b *Bridge) Open(_ context.Context, dev DeviceLink, p Persona) error {
+	ctx, cancel := context.WithCancel(dev.Context())
+	l := &link{b: b, dev: dev, persona: p, ctx: ctx, cancel: cancel, done: make(chan struct{}), ready: make(chan struct{})}
+	if _, loaded := b.links.LoadOrStore(dev.DeviceID(), l); loaded {
+		cancel()
+		return fmt.Errorf("open %s: %w", dev.DeviceID(), ErrAlreadyOpen)
+	}
 	go l.run()
+	return nil
 }
 
-func (b *Bridge) OnDisconnect(s *gateway.Session) {
-	b.mu.Lock()
-	l := b.links[s.ID()]
-	delete(b.links, s.ID())
-	b.mu.Unlock()
-	if l != nil {
-		l.cancel()
+// Close 结束设备的会话，返回时所有相关 goroutine 都已退出。
+func (b *Bridge) Close(d id.DeviceID) {
+	v, ok := b.links.LoadAndDelete(d)
+	if !ok {
+		return
+	}
+	l := v.(*link)
+	l.cancel()
+	<-l.done
+}
+
+func (b *Bridge) Available(d id.DeviceID) bool {
+	l := b.link(d)
+	return l != nil && l.cur.Load() != nil
+}
+
+// Forward 把一帧麦克风 Opus 交给 AI；未连接、未在收音或队列满时丢弃。
+func (b *Bridge) Forward(d id.DeviceID, frame []byte) {
+	l := b.link(d)
+	if l == nil || !l.listening.Load() {
+		return
+	}
+	if c := l.cur.Load(); c != nil {
+		c.trySend(outFrame{binary: true, data: frame})
 	}
 }
 
-func (b *Bridge) OnMessage(s *gateway.Session, msg protocol.Message) {
-	if l := b.link(s); l != nil {
-		l.onDeviceMessage(msg)
+// Listen 开关灵矽收音，并相应切换灯光。
+func (b *Bridge) Listen(d id.DeviceID, on bool) {
+	if l := b.link(d); l != nil {
+		l.setListening(on)
 	}
 }
 
-func (b *Bridge) OnAudio(s *gateway.Session, frame []byte) {
-	if l := b.link(s); l != nil {
-		l.onMic(frame)
+// Interrupt 中止 AI 播报：通知灵矽，并丢弃本轮剩余的 TTS 音频。
+func (b *Bridge) Interrupt(d id.DeviceID) {
+	if l := b.link(d); l != nil {
+		l.interrupt()
 	}
 }
 
-func (b *Bridge) link(s *gateway.Session) *link {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.links[s.ID()]
+// Say 让小伙伴直接说出 text，不经 LLM。会话尚未连上时等到连上或 ctx 结束。
+func (b *Bridge) Say(ctx context.Context, d id.DeviceID, text string) error {
+	l := b.link(d)
+	if l == nil {
+		return fmt.Errorf("say to %s: %w", d, ErrUnavailable)
+	}
+	c, err := l.waitReady(ctx)
+	if err != nil {
+		return fmt.Errorf("say to %s: %w", d, err)
+	}
+	// 灵矽文档里 listen detect 的 text_response 是"需要播放的文字"。
+	msg := map[string]any{"type": "listen", "session_id": c.session, "state": "detect", "mode": "realtime", "text_response": text}
+	if err := c.sendJSON(ctx, msg); err != nil {
+		return fmt.Errorf("say to %s: %w", d, err)
+	}
+	return nil
 }
 
-// link 是一台设备与灵矽之间的会话。
+func (b *Bridge) link(d id.DeviceID) *link {
+	v, ok := b.links.Load(d)
+	if !ok {
+		return nil
+	}
+	return v.(*link)
+}
+
+func (b *Bridge) emitAIState(d id.DeviceID, s AIState) {
+	if fn := b.onAIState.Load(); fn != nil {
+		(*fn)(d, s)
+	}
+}
+
+// link 是一台设备在 bridge 里的全部状态，跨越多次重连。
 type link struct {
-	b      *Bridge
-	dev    *gateway.Session
-	ctx    context.Context
-	cancel context.CancelFunc
+	b       *Bridge
+	dev     DeviceLink
+	persona Persona
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan struct{}
 
-	wmu sync.Mutex // 保护对灵矽的写
-	ws  *websocket.Conn
+	cur       atomic.Pointer[conn] // 当前连接，未连上为 nil
+	listening atomic.Bool
+	speaking  atomic.Bool
+	muted     atomic.Bool // Interrupt 之后到下一次 tts start 之间丢弃 TTS 音频
 
-	mu        sync.Mutex
-	ready     bool
-	listening bool // 设备麦克风已开启
-	speaking  bool // 灵矽正在下发 TTS
-	linxSess  string
+	mu    sync.Mutex
+	ready chan struct{} // 连上时关闭；断线后换新的
+}
+
+// conn 是一次灵矽连接；所有写都经 out 交给唯一的写 goroutine。
+type conn struct {
+	ws      *websocket.Conn
+	session string
+	out     chan outFrame
+	closed  chan struct{}
+}
+
+type outFrame struct {
+	binary bool
+	data   []byte
+}
+
+func (c *conn) trySend(f outFrame) bool {
+	select {
+	case c.out <- f:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *conn) sendJSON(ctx context.Context, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	select {
+	case c.out <- outFrame{data: data}:
+		return nil
+	case <-c.closed:
+		return ErrUnavailable
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (l *link) run() {
+	defer close(l.done)
+	defer l.b.links.CompareAndDelete(l.dev.DeviceID(), l)
 	defer l.cancel()
 
-	mac := PseudoMAC(l.dev.DeviceID())
-	ws, welcome, err := l.dial(mac)
-	if err != nil {
-		slog.Warn("linx dial failed", "device_id", l.dev.DeviceID(), "linx_mac", mac, "error", err)
-		_ = l.dev.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "ai service unavailable"})
-		return
+	delay := l.b.backoffMin
+	reported := false
+	for {
+		started := time.Now()
+		connected, err := l.session()
+		if l.ctx.Err() != nil {
+			return
+		}
+		if connected {
+			reported = false
+		} else if !reported {
+			// 只报告一次，避免重试期间刷屏。
+			_ = l.dev.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "ai service unavailable"})
+			reported = true
+		}
+		slog.Warn("linx session ended, will retry", "device_id", l.dev.DeviceID(), "connected", connected, "retry_in", delay, "error", err)
+		if time.Since(started) >= stableAfter {
+			delay = l.b.backoffMin
+		}
+		select {
+		case <-l.ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, l.b.backoffMax)
 	}
-	defer ws.Close()
+}
 
-	l.mu.Lock()
-	l.ws = ws
-	l.ready = true
-	l.linxSess = welcome.SessionID
-	wantListen := l.listening
-	l.mu.Unlock()
-	slog.Info("linx connected", "device_id", l.dev.DeviceID(), "linx_mac", mac,
-		"linx_session", welcome.SessionID, "downlink_rate", welcome.AudioParams.SampleRate)
+// session 连接一次并服务到断线。connected 表示握手是否成功。
+func (l *link) session() (connected bool, err error) {
+	ws, w, err := l.dial()
+	if err != nil {
+		return false, err
+	}
+
+	ctx, cancel := context.WithCancel(l.ctx)
+	c := &conn{ws: ws, session: w.SessionID, out: make(chan outFrame, outQueue), closed: make(chan struct{})}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		l.writeLoop(ctx, c)
+	}()
+	defer func() {
+		cancel()
+		_ = ws.Close()
+		wg.Wait()
+		l.disconnected()
+	}()
+
+	l.connected(c)
+	slog.Info("linx connected", "device_id", l.dev.DeviceID(), "agent_id", l.persona.AgentID,
+		"linx_session", w.SessionID, "downlink_rate", w.AudioParams.SampleRate)
 
 	// 灵矽的下行采样率可能是 24kHz，必须在任何音频帧之前告知设备。
 	_ = l.dev.Send(&protocol.AudioDownlink{
 		Type:          protocol.TypeAudioDownlink,
-		SampleRate:    welcome.AudioParams.SampleRate,
-		FrameDuration: welcome.AudioParams.FrameDuration,
+		SampleRate:    w.AudioParams.SampleRate,
+		FrameDuration: w.AudioParams.FrameDuration,
 	})
-
-	// 设备在握手完成前就开了麦克风时，补发 listen。
-	if wantListen {
-		l.sendListen("start")
+	// 设备在连上之前就开了麦克风（或是重连）时，补发 listen。
+	if l.listening.Load() {
+		l.sendListen(c, "start")
 	}
 
-	// 设备断开时关闭灵矽连接以解除读阻塞。
+	wg.Add(1)
 	go func() {
-		<-l.ctx.Done()
-		_ = ws.Close()
+		defer wg.Done()
+		<-ctx.Done()
+		_ = ws.Close() // 解除读阻塞
 	}()
-	l.readLoop(ws)
+	return true, l.readLoop(c)
 }
 
-func (l *link) dial(mac string) (*websocket.Conn, welcome, error) {
+func (l *link) dial() (*websocket.Conn, welcome, error) {
 	hdr := http.Header{}
-	hdr.Set("Device-Id", mac) // 灵矽要求 MAC 形式，且该 MAC 需已预注册到智能体
+	hdr.Set("Device-Id", string(l.dev.DeviceID())) // 灵矽要求 MAC，且已预注册到智能体
 	hdr.Set("Client-Id", newUUID())
 	hdr.Set("Protocol-Version", "1")
 	if l.b.cfg.Token != "" {
 		hdr.Set("Authorization", "Bearer "+l.b.cfg.Token)
 	}
-	if l.b.cfg.AgentID != "" {
-		hdr.Set("X-Agent-ID", l.b.cfg.AgentID)
+	if l.persona.AgentID != "" {
+		hdr.Set("X-Agent-ID", l.persona.AgentID)
 	}
 
 	ctx, cancel := context.WithTimeout(l.ctx, dialTimeout)
@@ -170,17 +331,8 @@ func (l *link) dial(mac string) (*websocket.Conn, welcome, error) {
 	}
 	ws.SetReadLimit(readLimit)
 
-	hello := map[string]any{
-		"type":      "hello",
-		"version":   1,
-		"transport": "websocket",
-		"audio_params": map[string]any{
-			"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60,
-		},
-		"features": map[string]any{"mcp": false},
-	}
 	_ = ws.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if err := ws.WriteJSON(hello); err != nil {
+	if err := ws.WriteJSON(l.hello()); err != nil {
 		ws.Close()
 		return nil, welcome{}, fmt.Errorf("send hello: %w", err)
 	}
@@ -200,17 +352,60 @@ func (l *link) dial(mac string) (*websocket.Conn, welcome, error) {
 	return ws, w, nil
 }
 
-// readLoop 把灵矽的下行翻译成设备协议。
-func (l *link) readLoop(ws *websocket.Conn) {
+func (l *link) hello() map[string]any {
+	return map[string]any{
+		"type":      "hello",
+		"version":   1,
+		"transport": "websocket",
+		"audio_params": map[string]any{
+			"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60,
+		},
+		"features": map[string]any{"mcp": false},
+		// 名字每次会话注入，起名后不必改智能体配置；空值也要发，否则提示词里会留下 {{占位符}}。
+		"agent_params": map[string]any{
+			"custom_replace_prompt": map[string]string{
+				"doll_name":  l.persona.DollName,
+				"kid_name":   l.persona.KidName,
+				"voice_step": strconv.FormatBool(l.persona.VoiceStep),
+			},
+		},
+	}
+}
+
+func (l *link) writeLoop(ctx context.Context, c *conn) {
+	defer close(c.closed)
 	for {
-		mt, data, err := ws.ReadMessage()
-		if err != nil {
+		select {
+		case <-ctx.Done():
 			return
+		case f := <-c.out:
+			mt := websocket.TextMessage
+			if f.binary {
+				mt = websocket.BinaryMessage
+			}
+			_ = c.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
+			if err := c.ws.WriteMessage(mt, f.data); err != nil {
+				_ = c.ws.Close()
+				return
+			}
+		}
+	}
+}
+
+// readLoop 把灵矽的下行翻译成设备协议。
+func (l *link) readLoop(c *conn) error {
+	for {
+		mt, data, err := c.ws.ReadMessage()
+		if err != nil {
+			return err
 		}
 		switch mt {
 		case websocket.BinaryMessage:
+			if l.muted.Load() {
+				continue
+			}
 			if err := l.dev.SendAudio(data); err != nil {
-				return
+				return fmt.Errorf("send audio to device: %w", err)
 			}
 		case websocket.TextMessage:
 			l.onLinxText(data)
@@ -218,77 +413,89 @@ func (l *link) readLoop(ws *websocket.Conn) {
 	}
 }
 
-func (l *link) writeLinx(v any) error {
-	l.wmu.Lock()
-	defer l.wmu.Unlock()
+func (l *link) connected(c *conn) {
+	l.cur.Store(c)
 	l.mu.Lock()
-	ws := l.ws
+	close(l.ready)
 	l.mu.Unlock()
-	if ws == nil {
-		return errors.New("linx not connected")
-	}
-	_ = ws.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if raw, ok := v.([]byte); ok {
-		return ws.WriteMessage(websocket.BinaryMessage, raw)
-	}
-	return ws.WriteJSON(v)
 }
 
-func (l *link) sendListen(state string) {
+func (l *link) disconnected() {
+	l.cur.Store(nil)
+	l.mu.Lock()
+	l.ready = make(chan struct{})
+	l.mu.Unlock()
+	l.muted.Store(false)
+	if l.speaking.Swap(false) && l.dev.Context().Err() == nil {
+		l.stopSpeaking()
+	}
+}
+
+func (l *link) waitReady(ctx context.Context) (*conn, error) {
+	for {
+		if c := l.cur.Load(); c != nil {
+			return c, nil
+		}
+		l.mu.Lock()
+		ready := l.ready
+		l.mu.Unlock()
+		if c := l.cur.Load(); c != nil {
+			return c, nil
+		}
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-l.ctx.Done():
+			return nil, ErrUnavailable
+		}
+	}
+}
+
+func (l *link) sendListen(c *conn, state string) {
 	// realtime 为全双工：说话可打断 AI，是免按键对话推荐的模式。
-	msg := map[string]any{"type": "listen", "state": state, "mode": "realtime"}
-	if err := l.writeLinx(msg); err != nil {
+	msg := map[string]any{"type": "listen", "session_id": c.session, "state": state, "mode": "realtime"}
+	ctx, cancel := context.WithTimeout(l.ctx, writeTimeout)
+	defer cancel()
+	if err := c.sendJSON(ctx, msg); err != nil {
 		slog.Debug("linx listen send failed", "state", state, "error", err)
 	}
 }
 
-// onMic 转发设备麦克风的一帧 Opus 到灵矽；未就绪或麦克风关闭时丢弃。
-func (l *link) onMic(frame []byte) {
-	l.mu.Lock()
-	ok := l.ready && l.listening
-	l.mu.Unlock()
-	if !ok {
-		return
-	}
-	_ = l.writeLinx(frame)
-}
-
-func (l *link) onDeviceMessage(msg protocol.Message) {
-	switch m := msg.(type) {
-	case *protocol.MicState:
-		l.setListening(m.State == "start")
-	case *protocol.Wake:
-		// 唤醒视为开始收音；已在说话时不重复。
-		l.setListening(true)
-	}
-}
-
 func (l *link) setListening(on bool) {
-	l.mu.Lock()
-	changed := l.listening != on
-	l.listening = on
-	ready := l.ready
-	speaking := l.speaking
-	l.mu.Unlock()
+	if l.listening.Swap(on) == on {
+		return
+	}
+	if c := l.cur.Load(); c != nil {
+		l.sendListen(c, map[bool]string{true: "start", false: "stop"}[on])
+	}
+	if !l.speaking.Load() {
+		l.light(map[bool]string{true: "listening", false: "idle"}[on])
+	}
+}
 
-	if !changed {
+func (l *link) interrupt() {
+	if !l.speaking.Swap(false) {
 		return
 	}
-	if on {
-		if ready {
-			l.sendListen("start")
-		}
-		if !speaking {
-			l.light("listening")
-		}
-		return
+	l.muted.Store(true)
+	if c := l.cur.Load(); c != nil {
+		ctx, cancel := context.WithTimeout(l.ctx, writeTimeout)
+		_ = c.sendJSON(ctx, map[string]any{"type": "abort", "session_id": c.session, "reason": "interrupted"})
+		cancel()
 	}
-	if ready {
-		l.sendListen("stop")
-	}
-	if !speaking {
+	l.stopSpeaking()
+}
+
+// stopSpeaking 告诉设备 AI 说完了；调用方已把 speaking 置为 false。
+func (l *link) stopSpeaking() {
+	_ = l.dev.Send(&protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "stop", Source: "ai"})
+	if l.listening.Load() {
+		l.light("listening")
+	} else {
 		l.light("idle")
 	}
+	l.b.emitAIState(l.dev.DeviceID(), AIIdle)
 }
 
 // onLinxText 处理灵矽的 stt / tts / llm 文本消息。
@@ -307,21 +514,16 @@ func (l *link) onLinxText(data []byte) {
 	case "tts":
 		switch m.State {
 		case "start":
-			l.mu.Lock()
-			l.speaking = true
-			l.mu.Unlock()
+			l.muted.Store(false)
+			if l.speaking.Swap(true) {
+				return
+			}
 			l.light("speaking")
 			_ = l.dev.Send(&protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "start", Source: "ai"})
+			l.b.emitAIState(l.dev.DeviceID(), AISpeaking)
 		case "stop":
-			l.mu.Lock()
-			l.speaking = false
-			listening := l.listening
-			l.mu.Unlock()
-			_ = l.dev.Send(&protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "stop", Source: "ai"})
-			if listening {
-				l.light("listening")
-			} else {
-				l.light("idle")
+			if l.speaking.Swap(false) {
+				l.stopSpeaking()
 			}
 		}
 	}

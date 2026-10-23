@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+
+	"github.com/LiusCraft/palpable/server/internal/id"
 )
 
 // Message 是所有协议文本消息的公共接口。
@@ -58,7 +61,8 @@ func DefaultAudioParams() AudioParams {
 
 type Hello struct {
 	Type         string      `json:"type"`
-	DeviceID     string      `json:"device_id"`
+	DeviceID     id.DeviceID `json:"device_id"`
+	Skin         string      `json:"skin,omitempty"`
 	Firmware     string      `json:"firmware,omitempty"`
 	AudioParams  AudioParams `json:"audio_params"`
 	Capabilities []string    `json:"capabilities"`
@@ -199,17 +203,19 @@ func Encode(msg Message) ([]byte, error) {
 	return json.Marshal(msg)
 }
 
+var (
+	macRe  = regexp.MustCompile(`^[0-9a-f]{2}(:[0-9a-f]{2}){5}$`)
+	skinRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+)
+
 func validate(msg Message) error {
 	switch m := msg.(type) {
 	case *Hello:
-		if m.DeviceID == "" || len(m.DeviceID) > 64 {
-			return errors.New("device_id length must be 1..64")
+		if !macRe.MatchString(string(m.DeviceID)) {
+			return errors.New("device_id must be a lowercase colon-separated MAC")
 		}
-		for _, r := range m.DeviceID {
-			ok := r == '_' || r == '-' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-			if !ok {
-				return errors.New("device_id contains illegal character")
-			}
+		if m.Skin != "" && !skinRe.MatchString(m.Skin) {
+			return errors.New("invalid skin")
 		}
 		if m.AudioParams != DefaultAudioParams() {
 			return errors.New("unsupported audio_params")

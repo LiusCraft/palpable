@@ -123,7 +123,9 @@ func TestDecodeUpstreamRejectsBadInput(t *testing.T) {
 		"unknown field":    `{"type":"wake","source":"touch","x":1}`,
 		"bad source":       `{"type":"wake","source":"kick"}`,
 		"bad device id":    `{"type":"hello","device_id":"a b","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
-		"bad audio params": `{"type":"hello","device_id":"a","audio_params":{"format":"opus","sample_rate":8000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"non-mac id":       `{"type":"hello","device_id":"plush-001","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"bad skin":         `{"type":"hello","device_id":"02:00:00:00:00:01","skin":"Dragon!","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"bad audio params": `{"type":"hello","device_id":"02:00:00:00:00:01","audio_params":{"format":"opus","sample_rate":8000,"channels":1,"frame_duration":60},"capabilities":[]}`,
 		"lat out of range": `{"type":"location","lat":91,"lng":0}`,
 		"strength > 1":     `{"type":"proximity","peers":[{"device_id":"b","strength":2}]}`,
 	}

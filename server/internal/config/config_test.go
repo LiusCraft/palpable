@@ -16,11 +16,11 @@ func write(t *testing.T, body string) string {
 }
 
 func TestLoad(t *testing.T) {
-	cfg, err := Load(write(t, "addr: \":9000\"\nlinx:\n  ws_url: wss://x/ws\n  token: t\n  agent_id: a\n"))
+	cfg, err := Load(write(t, "addr: \":9000\"\nlinx:\n  ws_url: wss://x/ws\n  token: t\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != ":9000" || !cfg.Linx.Enabled() || cfg.Linx.Token != "t" || cfg.Linx.AgentID != "a" {
+	if cfg.Addr != ":9000" || !cfg.Linx.Enabled() || cfg.Linx.Token != "t" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }

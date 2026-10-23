@@ -12,7 +12,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 )
 
-const helloJSON = `{"type":"hello","device_id":"plush-001","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":["mic","speaker"]}`
+const helloJSON = `{"type":"hello","device_id":"02:00:00:00:00:01","skin":"dragon","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":["mic","speaker"]}`
 
 func dial(t *testing.T, gw *Gateway) *websocket.Conn {
 	t.Helper()
@@ -45,7 +45,7 @@ func TestHandshakeReturnsAck(t *testing.T) {
 	if !strings.Contains(string(data), `"type":"hello.ack"`) || !strings.Contains(string(data), `"session_id"`) {
 		t.Fatalf("unexpected ack: %s", data)
 	}
-	if _, ok := gw.Session("plush-001"); !ok {
+	if _, ok := gw.Session("02:00:00:00:00:01"); !ok {
 		t.Fatal("session not registered after hello")
 	}
 }
@@ -114,7 +114,7 @@ func TestRoutesMessagesAudioAndDisconnect(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("OnDisconnect not called")
 	}
-	waitUntil(t, func() bool { _, ok := gw.Session("plush-001"); return !ok })
+	waitUntil(t, func() bool { _, ok := gw.Session("02:00:00:00:00:01"); return !ok })
 }
 
 func TestDuplicateDeviceRejected(t *testing.T) {

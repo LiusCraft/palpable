@@ -33,6 +33,11 @@
     "Capability": {
       "enum": ["mic", "speaker", "light", "haptic", "proximity", "location", "wake"]
     },
+    "MAC": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$",
+      "description": "设备 MAC，小写、冒号分隔；也是设备在灵矽侧的 Device-Id"
+    },
     "LightState": {
       "enum": ["idle", "listening", "thinking", "speaking", "peer_talking", "muted"]
     },
@@ -42,7 +47,8 @@
       "required": ["type", "device_id", "audio_params", "capabilities"],
       "properties": {
         "type": { "const": "hello" },
-        "device_id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$" },
+        "device_id": { "$ref": "#/$defs/MAC" },
+        "skin": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$", "description": "皮套款式，服务端据此选风格智能体；缺省或未知时用默认风格" },
         "firmware": { "type": "string", "maxLength": 64 },
         "audio_params": { "$ref": "#/$defs/AudioParams" },
         "capabilities": {

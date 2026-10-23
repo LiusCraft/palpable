@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 )
 
@@ -24,7 +25,7 @@ const (
 	maxFrameSize = 4 << 10
 )
 
-// Handler 由后续模块（bridge、channel 等）实现，接收设备事件。
+// Handler 由 app 实现，接收设备事件。OnAudio 是热路径。
 type Handler interface {
 	OnConnect(s *Session)
 	OnMessage(s *Session, msg protocol.Message)
@@ -38,7 +39,7 @@ type Gateway struct {
 	upgrader websocket.Upgrader
 
 	mu       sync.RWMutex
-	sessions map[string]*Session // device_id -> session
+	sessions map[id.DeviceID]*Session
 }
 
 // New 创建网关。handler 为 nil 时只做握手；checkOrigin 为 nil 时只允许同源。
@@ -49,12 +50,12 @@ func New(handler Handler, checkOrigin func(r *http.Request) bool) *Gateway {
 	return &Gateway{
 		handler:  handler,
 		upgrader: websocket.Upgrader{CheckOrigin: checkOrigin, ReadBufferSize: 4096, WriteBufferSize: 4096},
-		sessions: make(map[string]*Session),
+		sessions: make(map[id.DeviceID]*Session),
 	}
 }
 
 // Session 返回在线设备的会话。
-func (g *Gateway) Session(deviceID string) (*Session, bool) {
+func (g *Gateway) Session(deviceID id.DeviceID) (*Session, bool) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	s, ok := g.sessions[deviceID]
@@ -86,6 +87,8 @@ func (g *Gateway) run(ctx context.Context, ws *websocket.Conn) {
 		return
 	}
 	s.deviceID = hello.DeviceID
+	s.skin = hello.Skin
+	s.firmware = hello.Firmware
 	s.capabilities = hello.Capabilities
 
 	if !g.register(s) {
@@ -173,7 +176,9 @@ func (g *Gateway) unregister(s *Session) {
 // Session 代表一台在线设备。写操作串行化，可从多个 goroutine 调用。
 type Session struct {
 	id           string
-	deviceID     string
+	deviceID     id.DeviceID
+	skin         string
+	firmware     string
 	capabilities []string
 	ctx          context.Context
 
@@ -182,7 +187,9 @@ type Session struct {
 }
 
 func (s *Session) ID() string               { return s.id }
-func (s *Session) DeviceID() string         { return s.deviceID }
+func (s *Session) DeviceID() id.DeviceID    { return s.deviceID }
+func (s *Session) Skin() string             { return s.skin }
+func (s *Session) Firmware() string         { return s.firmware }
 func (s *Session) Capabilities() []string   { return s.capabilities }
 func (s *Session) Context() context.Context { return s.ctx }
 

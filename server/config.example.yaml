@@ -5,5 +5,4 @@ addr: ":8080"
 linx:
   ws_url: wss://xrobo-io.qiniuapi.com/v1/ws/
   token: ""
-  agent_id: ""          # 可选，经 X-Agent-ID 指定智能体
   voiceprint_base: ""   # 声纹服务地址（演示环境）

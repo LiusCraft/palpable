@@ -258,7 +258,8 @@ type DeviceLink interface {
     Context() context.Context
 }
 
-func (b *Bridge) Open(ctx context.Context, dev DeviceLink, p device.Profile) error // 开通成功后由 app 调用
+func (b *Bridge) Open(ctx context.Context, dev DeviceLink, p Persona) error // 开通成功后由 app 调用；后台连接
+func (b *Bridge) Listen(d id.DeviceID, on bool)        // 开关灵矽收音并切换灯光；voice 落地前由 app 按 mic.state 调用
 func (b *Bridge) Close(d id.DeviceID)
 func (b *Bridge) Forward(d id.DeviceID, frame []byte)   // voice.AI，热路径
 func (b *Bridge) Interrupt(d id.DeviceID)               // 中止 AI 播报并停止下发
@@ -272,11 +273,12 @@ func (b *Bridge) OnMCP(fn func(d id.DeviceID, payload json.RawMessage))    // �
 **数据结构**
 ```go
 type Config struct { URL, Token string } // 来自 YAML 配置；智能体 ID 取自设备档案
-type link struct {
-    dev   DeviceLink
-    ws    *websocket.Conn
-    input <-chan []byte // 上行音频来源，现在是本设备麦克风；预留替换为频道发言
-    ready, listening, speaking bool
+
+// 由 app 从 device.Profile 映射，bridge 因此不依赖 device
+type Persona struct {
+    AgentID           string // X-Agent-ID；为空时用灵矽平台上该 MAC 已绑定的智能体
+    DollName, KidName string
+    VoiceStep         bool
 }
 type AIState int // AIIdle | AISpeaking
 ```
@@ -284,9 +286,11 @@ type AIState int // AIIdle | AISpeaking
 **规则**
 - 握手头：`Authorization`、`Protocol-Version: 1`、`Device-Id`（设备自身 MAC）、`Client-Id`（UUID）、`X-Agent-ID`（档案中的智能体）。`listen.mode=realtime`。
 - `hello.agent_params.custom_replace_prompt` 注入 `doll_name`、`kid_name`，引导智能体另注入 `voice_step`（是否做声音登记）；起名后在下次会话生效，当前会话里 AI 已从对话中得知名字。交棒时 `Close` 再 `Open` 即换智能体，`Open` 总是读档案里最新的 `agent_id`。
-- 灵矽断线后指数退避重连，设备断开时停止重连并释放所有 goroutine。
+- 灵矽断线后指数退避重连（1 秒起，最长 30 秒），首次连不上时向设备发一次 `error`；设备断开时停止重连并释放所有 goroutine，`Close` 返回时会话已完全退出。
+- 对灵矽的写只经一个写 goroutine 与有界队列；`Forward` 不加锁，队列满时丢帧。
+- `Say` 用 `listen{state: detect, text_response}` 播报，未连上时等到连上；`Interrupt` 发 `abort`，并丢弃本轮剩余 TTS 帧直到下一次 `tts start`。
 
-**依赖** protocol、id、device（只读 `Profile` 类型）；端口 `DeviceLink`。
+**依赖** protocol、id；端口 `DeviceLink`。
 
 ---
 
@@ -653,7 +657,6 @@ func Encode(msg Message) ([]byte, error)
 
 | 方向 | 消息 | 变更 | 用途 | 任务 |
 | --- | --- | --- | --- | --- |
-| 上行 | `hello` | 增加 `skin`；`device_id` 限定为 MAC（小写冒号分隔） | 自动开通 | S2 |
 | 上行 / 下行 | `mcp` | 新增，`payload` 为 JSON-RPC | 设备端 MCP | S7 |
 | 下行 | `channel.state` | 新增：`name` `color` `event`（joined / switched / left） | 入群、切群的灯色与提示 | S4 |
 | 下行 | `friend.state` | 新增：`event`（pending / confirmed / removed） `device_id` `name` | 成为好友的振动与提示 | S3 |

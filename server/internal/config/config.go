@@ -20,7 +20,6 @@ type Config struct {
 type Linx struct {
 	WSURL          string `yaml:"ws_url"`          // 例如 wss://xrobo-io.qiniuapi.com/v1/ws/
 	Token          string `yaml:"token"`           // Bearer 令牌
-	AgentID        string `yaml:"agent_id"`        // 可选，经 X-Agent-ID 指定智能体
 	VoiceprintBase string `yaml:"voiceprint_base"` // 声纹服务地址（演示环境）
 }
 
