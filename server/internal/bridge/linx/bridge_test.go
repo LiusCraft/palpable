@@ -26,6 +26,12 @@ type fakeLinx struct {
 }
 
 func newFakeLinx(t *testing.T) (*fakeLinx, string) {
+	return newFakeLinxWithGate(t, nil)
+}
+
+// newFakeLinxWithGate 在 gate 非 nil 时先等它关闭再回 welcome，
+// 用来模拟设备在灵矽握手完成前就打开了麦克风。
+func newFakeLinxWithGate(t *testing.T, gate <-chan struct{}) (*fakeLinx, string) {
 	f := &fakeLinx{
 		t:       t,
 		headers: make(chan http.Header, 1),
@@ -43,6 +49,13 @@ func newFakeLinx(t *testing.T) (*fakeLinx, string) {
 		// 灵矽先收 hello，再回 hello。
 		if _, _, err := ws.ReadMessage(); err != nil {
 			return
+		}
+		if gate != nil {
+			select {
+			case <-gate:
+			case <-time.After(2 * time.Second):
+				return
+			}
 		}
 		_ = ws.WriteJSON(map[string]any{
 			"type": "hello", "transport": "websocket", "session_id": "linx-s1",
@@ -200,6 +213,9 @@ func TestMicStartForwardsListenAndAudio(t *testing.T) {
 		t.Fatal("mic audio not forwarded")
 	}
 
+	// 重复的 start 不产生新的 listen，随后停止时的输出顺序可证明它已被处理。
+	_ = dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"mic.state","state":"start"}`))
+
 	_ = dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"mic.state","state":"stop"}`))
 	if got := recvText(t, f.texts); !strings.Contains(got, `"state":"stop"`) {
 		t.Fatalf("expected listen stop, got %s", got)
@@ -258,4 +274,148 @@ func TestLinxUnavailableReportsErrorToDevice(t *testing.T) {
 	if got := readDeviceText(t, dev); !strings.Contains(got, `"type":"error"`) {
 		t.Fatalf("expected error, got %s", got)
 	}
+}
+
+func TestWakeStartsListening(t *testing.T) {
+	f, url := newFakeLinx(t)
+	dev := dialDevice(t, New(Config{URL: url}))
+	<-f.conn
+	readDeviceText(t, dev) // audio.downlink
+
+	_ = dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"wake","source":"voice"}`))
+	if got := recvText(t, f.texts); !strings.Contains(got, `"type":"listen"`) || !strings.Contains(got, `"state":"start"`) {
+		t.Fatalf("expected listen start after wake, got %s", got)
+	}
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"listening"`) {
+		t.Fatalf("expected listening light, got %s", got)
+	}
+}
+
+// 麦克风在灵矽握手完成前就打开时，握手后要补发 listen start。
+func TestMicStartBeforeLinxReadyIsReplayed(t *testing.T) {
+	gate := make(chan struct{})
+	f, url := newFakeLinxWithGate(t, gate)
+	dev := dialDevice(t, New(Config{URL: url}))
+
+	_ = dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"mic.state","state":"start"}`))
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"listening"`) {
+		t.Fatalf("expected listening light, got %s", got)
+	}
+
+	close(gate)
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"type":"audio.downlink"`) {
+		t.Fatalf("expected audio.downlink, got %s", got)
+	}
+	if got := recvText(t, f.texts); !strings.Contains(got, `"type":"listen"`) || !strings.Contains(got, `"state":"start"`) {
+		t.Fatalf("expected replayed listen start, got %s", got)
+	}
+}
+
+func TestTTSStopKeepsListeningLightWhenMicOn(t *testing.T) {
+	f, url := newFakeLinx(t)
+	dev := dialDevice(t, New(Config{URL: url}))
+	linx := <-f.conn
+	readDeviceText(t, dev) // audio.downlink
+
+	_ = dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"mic.state","state":"start"}`))
+	recvText(t, f.texts) // listen start
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"listening"`) {
+		t.Fatalf("expected listening light, got %s", got)
+	}
+
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "start"})
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"speaking"`) {
+		t.Fatalf("expected speaking light, got %s", got)
+	}
+	readDeviceText(t, dev) // speaker.state start
+
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "stop"})
+	readDeviceText(t, dev) // speaker.state stop
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"listening"`) {
+		t.Fatalf("expected listening light after tts stop, got %s", got)
+	}
+}
+
+func TestBadLinxMessageIsIgnored(t *testing.T) {
+	f, url := newFakeLinx(t)
+	dev := dialDevice(t, New(Config{URL: url}))
+	linx := <-f.conn
+	readDeviceText(t, dev) // audio.downlink
+
+	_ = linx.WriteMessage(websocket.TextMessage, []byte("{"))
+	// 坏消息之后连接仍可用：随后的 stt 应触发 thinking。
+	_ = linx.WriteJSON(map[string]any{"type": "stt", "text": "你好"})
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"thinking"`) {
+		t.Fatalf("expected thinking light, got %s", got)
+	}
+}
+
+func TestLinxWelcomeReadFailureReportsError(t *testing.T) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_, _, _ = ws.ReadMessage() // hello
+		ws.Close()
+	}))
+	t.Cleanup(srv.Close)
+
+	dev := dialDevice(t, New(Config{URL: "ws" + strings.TrimPrefix(srv.URL, "http")}))
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"type":"error"`) {
+		t.Fatalf("expected error, got %s", got)
+	}
+}
+
+func TestUnexpectedLinxWelcomeReportsError(t *testing.T) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_, _, _ = ws.ReadMessage() // hello
+		_ = ws.WriteJSON(map[string]any{"type": "nope"})
+	}))
+	t.Cleanup(srv.Close)
+
+	dev := dialDevice(t, New(Config{URL: "ws" + strings.TrimPrefix(srv.URL, "http")}))
+	if got := readDeviceText(t, dev); !strings.Contains(got, `"type":"error"`) {
+		t.Fatalf("expected error, got %s", got)
+	}
+}
+
+func TestWelcomeNormalize(t *testing.T) {
+	var empty welcome
+	empty.normalize()
+	if empty.AudioParams.SampleRate != 16000 || empty.AudioParams.FrameDuration != 60 {
+		t.Fatalf("defaults not applied: %+v", empty.AudioParams)
+	}
+
+	full := welcome{}
+	full.AudioParams.SampleRate = 24000
+	full.AudioParams.FrameDuration = 40
+	full.normalize()
+	if full.AudioParams.SampleRate != 24000 || full.AudioParams.FrameDuration != 40 {
+		t.Fatalf("explicit params overwritten: %+v", full.AudioParams)
+	}
+}
+
+func TestParseLinxRejectsMalformedJSON(t *testing.T) {
+	if _, err := parseLinx([]byte("{")); err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
+func TestWriteLinxBeforeConnectFails(t *testing.T) {
+	l := &link{}
+	if err := l.writeLinx(map[string]any{"type": "listen"}); err == nil {
+		t.Fatal("expected error before linx is connected")
+	}
+}
+
+func TestSendListenBeforeConnectIsDropped(t *testing.T) {
+	l := &link{}
+	l.sendListen("start") // 只记录 debug 日志，不应 panic
 }

@@ -2,8 +2,10 @@ package protocol
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -115,17 +117,78 @@ func TestEncodedDownstreamMatchesSchema(t *testing.T) {
 	}
 }
 
+func TestMsgType(t *testing.T) {
+	cases := []struct {
+		msg  Message
+		want string
+	}{
+		{&Hello{}, TypeHello},
+		{&Wake{}, TypeWake},
+		{&MicState{}, TypeMicState},
+		{&Proximity{}, TypeProximity},
+		{&Location{}, TypeLocation},
+		{&HelloAck{}, TypeHelloAck},
+		{&AudioDownlink{}, TypeAudioDownlink},
+		{&Light{}, TypeLight},
+		{&Haptic{}, TypeHaptic},
+		{&Sound{}, TypeSound},
+		{&SpeakerState{}, TypeSpeakerState},
+		{&Presence{}, TypePresence},
+		{&Error{}, TypeError},
+	}
+	for _, c := range cases {
+		if got := c.msg.MsgType(); got != c.want {
+			t.Errorf("%T.MsgType() = %q, want %q", c.msg, got, c.want)
+		}
+	}
+}
+
+func TestDecodeUpstreamAcceptsEveryUpstreamType(t *testing.T) {
+	const audioParams = `{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}`
+	cases := []struct {
+		in   string
+		want Message
+	}{
+		{`{"type":"hello","device_id":"plush-001","audio_params":` + audioParams + `,"capabilities":[]}`, &Hello{}},
+		{`{"type":"wake","source":"voice"}`, &Wake{}},
+		{`{"type":"mic.state","state":"start"}`, &MicState{}},
+		{`{"type":"proximity","peers":[]}`, &Proximity{}},
+		{`{"type":"location","lat":31.2,"lng":121.5}`, &Location{}},
+	}
+	for _, c := range cases {
+		got, err := DecodeUpstream([]byte(c.in))
+		if err != nil {
+			t.Errorf("%s: %v", c.in, err)
+			continue
+		}
+		if reflect.TypeOf(got) != reflect.TypeOf(c.want) {
+			t.Errorf("%s: got %T, want %T", c.in, got, c.want)
+		}
+	}
+}
+
 func TestDecodeUpstreamRejectsBadInput(t *testing.T) {
+	tooManyPeers := make([]string, 17)
+	for i := range tooManyPeers {
+		tooManyPeers[i] = fmt.Sprintf(`{"device_id":"d%d","strength":0.5}`, i)
+	}
 	cases := map[string]string{
-		"not json":         `{`,
-		"unknown type":     `{"type":"nope"}`,
-		"downstream type":  `{"type":"light","state":"idle"}`,
-		"unknown field":    `{"type":"wake","source":"touch","x":1}`,
-		"bad source":       `{"type":"wake","source":"kick"}`,
-		"bad device id":    `{"type":"hello","device_id":"a b","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
-		"bad audio params": `{"type":"hello","device_id":"a","audio_params":{"format":"opus","sample_rate":8000,"channels":1,"frame_duration":60},"capabilities":[]}`,
-		"lat out of range": `{"type":"location","lat":91,"lng":0}`,
-		"strength > 1":     `{"type":"proximity","peers":[{"device_id":"b","strength":2}]}`,
+		"not json":           `{`,
+		"unknown type":       `{"type":"nope"}`,
+		"downstream type":    `{"type":"light","state":"idle"}`,
+		"unknown field":      `{"type":"wake","source":"touch","x":1}`,
+		"bad source":         `{"type":"wake","source":"kick"}`,
+		"empty device id":    `{"type":"hello","device_id":"","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"device id too long": `{"type":"hello","device_id":"` + strings.Repeat("a", 65) + `","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"bad device id":      `{"type":"hello","device_id":"a b","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"bad audio params":   `{"type":"hello","device_id":"a","audio_params":{"format":"opus","sample_rate":8000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"bad mic state":      `{"type":"mic.state","state":"pause"}`,
+		"lat out of range":   `{"type":"location","lat":91,"lng":0}`,
+		"lng out of range":   `{"type":"location","lat":0,"lng":181}`,
+		"empty peer id":      `{"type":"proximity","peers":[{"device_id":"","strength":0.5}]}`,
+		"negative strength":  `{"type":"proximity","peers":[{"device_id":"b","strength":-0.1}]}`,
+		"strength > 1":       `{"type":"proximity","peers":[{"device_id":"b","strength":2}]}`,
+		"too many peers":     `{"type":"proximity","peers":[` + strings.Join(tooManyPeers, ",") + `]}`,
 	}
 	for name, in := range cases {
 		if _, err := DecodeUpstream([]byte(in)); err == nil {
