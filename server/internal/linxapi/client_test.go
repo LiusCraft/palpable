@@ -86,6 +86,29 @@ func TestPreregisterConflictAndSwitch(t *testing.T) {
 	}
 }
 
+func TestActivateDevice(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		if r.Header.Get("Device-Id") == "02:00:00:00:00:02" {
+			_, _ = io.WriteString(w, `{"activation":{"code":"123456"},"websocket":{"url":"wss://x"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"websocket":{"url":"wss://x","token":"t"},"server_time":{"timestamp":1}}`)
+	}))
+	defer srv.Close()
+	c := New("", "tok").WithOTA(srv.URL)
+	if err := c.ActivateDevice(context.Background(), "02:00:00:00:00:01"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("Device-Id") != "02:00:00:00:00:01" || got.Get("Client-Id") != deviceClientID("02:00:00:00:00:01") {
+		t.Fatalf("headers = %v", got)
+	}
+	if err := c.ActivateDevice(context.Background(), "02:00:00:00:00:02"); !errors.Is(err, ErrActivationRequired) {
+		t.Fatalf("activation required: %v", err)
+	}
+}
+
 func TestMemoryFlow(t *testing.T) {
 	c := server(t, map[string]string{
 		"POST /v1/memories":                 `{"code":614,"msg":"already exists"}`,
