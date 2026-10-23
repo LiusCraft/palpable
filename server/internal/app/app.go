@@ -273,7 +273,7 @@ func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
 // persona 把档案映射成 AI 会话参数；声音登记只在引导期且监护人同意时进行。
 func persona(p device.Profile) linx.Persona {
 	return linx.Persona{AgentID: p.AgentID, DollName: p.DollName, KidName: p.KidName,
-		VoiceStep: p.Stage == device.StageFresh && p.VoiceConsent}
+		VoiceStep: device.VoiceStep(p.Stage == device.StageFresh && p.VoiceConsent)}
 }
 
 // ensureCatalog 确保引导智能体与风格智能体在灵矽存在；失败时稍后重试，期间新设备开通会失败。

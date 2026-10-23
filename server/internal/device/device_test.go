@@ -37,6 +37,15 @@ func TestEnsureAllIsIdempotentAndPrompted(t *testing.T) {
 	if len(fake.Agents) != 1+len(styles) {
 		t.Fatalf("agents after restart = %d", len(fake.Agents))
 	}
+	// 已有的智能体在启动时同步最新提示词。
+	welcome := cat.Onboarding().AgentID
+	fake.Agents[welcome] = linxapi.AgentSpec{Name: "可感·小可", SystemPrompt: "旧提示词"}
+	if err := NewCatalog(s.Styles(), fake).EnsureAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.Agents[welcome].SystemPrompt != welcomePrompt {
+		t.Fatal("prompt not synced to existing agent")
+	}
 	if cat.ForSkin("nope").ID != defaultSkin || cat.ForSkin("dragon").AgentID == "" || cat.Onboarding().AgentID == "" {
 		t.Fatal("catalog lookups")
 	}

@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,7 +57,7 @@ type Persona struct {
 	AgentID   string // 经 X-Agent-ID 指定；为空时用灵矽平台上该 MAC 已绑定的智能体
 	DollName  string
 	KidName   string
-	VoiceStep bool // 仅引导智能体：本次是否做声音登记
+	VoiceStep string // 仅引导智能体：声音登记这一步的指令（由 device 给出），注入 {{voice_step}}
 }
 
 type AIState int
@@ -392,7 +391,7 @@ func (l *link) hello() map[string]any {
 			"custom_replace_prompt": map[string]string{
 				"doll_name":  l.persona.DollName,
 				"kid_name":   l.persona.KidName,
-				"voice_step": strconv.FormatBool(l.persona.VoiceStep),
+				"voice_step": l.persona.VoiceStep,
 			},
 		},
 	}

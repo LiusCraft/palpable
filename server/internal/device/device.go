@@ -113,25 +113,34 @@ func (c *Catalog) EnsureAll(ctx context.Context) error {
 }
 
 func (c *Catalog) ensure(ctx context.Context, s Style) (string, error) {
-	if rec, err := c.repo.Get(ctx, s.ID); err == nil && rec.AgentID != "" {
-		return rec.AgentID, nil
-	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+	mem := linxapi.MemoryLongTerm
+	if s.ID == onboarding.ID {
+		mem = linxapi.MemoryNone // 引导期的对话不留记忆
+	}
+	spec := linxapi.AgentSpec{Name: agentName(s), AssistantName: s.AgentName, SystemPrompt: s.SystemPrompt, MemoryModel: mem, VoiceID: s.VoiceID}
+
+	agent := ""
+	if rec, err := c.repo.Get(ctx, s.ID); err == nil {
+		agent = rec.AgentID
+	} else if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
-	agent, found, err := c.linx.FindAgentByName(ctx, agentName(s))
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		mem := linxapi.MemoryLongTerm
-		if s.ID == onboarding.ID {
-			mem = linxapi.MemoryNone // 引导期的对话不留记忆
-		}
-		agent, err = c.linx.CreateAgent(ctx, linxapi.AgentSpec{Name: agentName(s), AssistantName: s.AgentName, SystemPrompt: s.SystemPrompt, MemoryModel: mem, VoiceID: s.VoiceID})
+	if agent == "" {
+		id, found, err := c.linx.FindAgentByName(ctx, spec.Name)
 		if err != nil {
 			return "", err
 		}
-		slog.Info("linx agent created", "style", s.ID, "agent_id", agent)
+		agent = id
+		if !found {
+			if agent, err = c.linx.CreateAgent(ctx, spec); err != nil {
+				return "", err
+			}
+			slog.Info("linx agent created", "style", s.ID, "agent_id", agent)
+		}
+	}
+	// 每次启动都把提示词与音色同步到灵矽：代码里改了提示词，已有的智能体也要生效。
+	if err := c.linx.UpdateAgent(ctx, agent, spec); err != nil {
+		return "", fmt.Errorf("sync agent %s: %w", agent, err)
 	}
 	if err := c.repo.Put(ctx, store.Style{ID: s.ID, Skin: s.Skin, AgentID: agent}); err != nil {
 		return "", err

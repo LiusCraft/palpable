@@ -164,6 +164,9 @@ func (h *History) chats(ctx context.Context, d id.DeviceID, from time.Time) ([]C
 				older = true
 				continue
 			}
+			if s.MAC != "" && s.MAC != string(d) {
+				continue // 别的孩子的会话，不必拉消息
+			}
 			msgs, err := h.linx.SessionMessages(ctx, agent, s.ID)
 			if err != nil {
 				return out, err

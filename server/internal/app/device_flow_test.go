@@ -39,11 +39,13 @@ func TestDemoPresetBindsGuardian(t *testing.T) {
 	if got := a.applyDemo(ctx, p); got.Guardian != "g1" {
 		t.Fatalf("applyDemo = %+v", got)
 	}
-	if persona(device.Profile{Stage: device.StageFresh, VoiceConsent: true}).VoiceStep != true {
+	if persona(device.Profile{Stage: device.StageFresh, VoiceConsent: true}).VoiceStep != device.VoiceStep(true) {
 		t.Fatal("voice step only during onboarding with consent")
 	}
-	if persona(device.Profile{Stage: device.StageReady, VoiceConsent: true}).VoiceStep {
-		t.Fatal("no voice step after onboarding")
+	for _, p := range []device.Profile{{Stage: device.StageReady, VoiceConsent: true}, {Stage: device.StageFresh}} {
+		if persona(p).VoiceStep != device.VoiceStep(false) {
+			t.Fatalf("no voice step for %+v", p)
+		}
 	}
 }
 

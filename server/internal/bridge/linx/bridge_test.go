@@ -154,7 +154,7 @@ var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-
 
 func TestHandshakeUsesDeviceMACAndPersona(t *testing.T) {
 	f := newFakeLinx(t)
-	open(t, f, Persona{AgentID: "agent-7", DollName: "小龙", KidName: "朵朵", VoiceStep: true})
+	open(t, f, Persona{AgentID: "agent-7", DollName: "小龙", KidName: "朵朵", VoiceStep: "请跟读"})
 
 	h := recv(t, f.headers)
 	if h.Get("Authorization") != "Bearer secret-token" {
@@ -175,7 +175,7 @@ func TestHandshakeUsesDeviceMACAndPersona(t *testing.T) {
 
 	hello := recv(t, f.hellos)
 	vars := hello["agent_params"].(map[string]any)["custom_replace_prompt"].(map[string]any)
-	if vars["doll_name"] != "小龙" || vars["kid_name"] != "朵朵" || vars["voice_step"] != "true" {
+	if vars["doll_name"] != "小龙" || vars["kid_name"] != "朵朵" || vars["voice_step"] != "请跟读" {
 		t.Errorf("custom_replace_prompt = %v", vars)
 	}
 }

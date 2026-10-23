@@ -53,6 +53,16 @@ func (f *Fake) CreateAgent(_ context.Context, a AgentSpec) (string, error) {
 	return id, nil
 }
 
+func (f *Fake) UpdateAgent(_ context.Context, agentID string, a AgentSpec) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.Agents[agentID]; !ok {
+		return ErrNotFound
+	}
+	f.Agents[agentID] = a
+	return nil
+}
+
 func (f *Fake) FindAgentByName(_ context.Context, name string) (string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
