@@ -20,7 +20,7 @@
                               ▲
                             zone（位置 → 区域频道）
 
- device（档案与开箱引导）  linxapi（灵矽 REST）  history（今日回顾）  share（画面分享）
+ device（档案与自动开通）  linxapi（灵矽 REST）  history（今日回顾）  share（画面分享）
  parentapi（家长端 REST）  world（演示观察通道）  store（SQLite）
 ```
 
@@ -34,13 +34,48 @@
 | [zone](#6-zone) | 位置到区域频道 | ⬜ |
 | [bridge/linx](#7-bridgelinx) | 设备与灵矽的会话桥接 | 🚧 |
 | [bridge/mcp](#8-bridgemcp) | 设备端 MCP 代理与业务工具 | ⬜ |
-| [device](#9-device) | 设备档案、开箱引导、认主 | ⬜ |
+| [device](#9-device) | 设备档案、按外观自动开通智能体、开箱引导 | ⬜ |
 | [linxapi](#10-linxapi) | 灵矽 REST 客户端 | ⬜ |
 | [history](#11-history) | 今日回顾的事件记录 | ⬜ |
 | [share](#12-share) | 画面分享 | ⬜ |
 | [parentapi](#13-parentapi) | 家长端 REST | ⬜ |
 | [world](#14-world) | 演示用观察通道 | ⬜ |
 | [store](#15-store) | 持久化 | ⬜ |
+
+## 设备如何组织
+
+**设备身份就是设备 MAC。** 真实设备用自己的 MAC；Web 模拟器首次打开时生成一个并存在浏览器里。设备连上后端时自报家门，后端据此**自动开通**，不需要人工配置。
+
+**风格智能体。** 我们预置几种风格的智能体，与皮套外观一一对应，设备的外观（`skin`）默认决定它用哪个：
+
+| skin | 风格智能体 | 说明 |
+| --- | --- | --- |
+| `dragon` | 小龙 | 每种风格有自己的系统提示词与音色 |
+| `rabbit` | 兔兔 | |
+| `bear` | 小熊 | |
+| `cat` | 小猫 | |
+
+服务端启动时确保每个风格的智能体在灵矽侧存在（按名字查找，缺失则创建），记下 `agent_id`。`skin` 未知或缺失时用默认风格。
+
+**上线与自动开通流程**
+
+```
+设备 hello（device_id=MAC, skin, firmware）
+   │
+   ▼
+device.Ensure(info)  ── 幂等
+   ├─ 没有档案：按 skin 选风格智能体 → linxapi.PreregisterDevice(agent, mac) → 建档案（stage=fresh）
+   ├─ 有档案但 skin 对应的智能体变了（换皮套）：linxapi.SwitchAgent → 更新档案
+   └─ 有档案且一致：直接返回
+   │
+   ▼
+bridge/linx 以该 MAC 连灵矽 → 正常对话；stage=fresh 时进入开箱引导
+```
+
+- **开通失败**：设备收到 `error`，灯变 `muted`，稍后自动重试。频道对讲不依赖 AI，所以开通失败时设备仍可进入频道与好友说话。
+- **一个风格智能体对应很多设备**：记忆按设备 MAC 隔离（灵矽的记忆值与片段按 `identify_id` 区分）。
+- **取舍一：声纹。** 声纹说话人绑定和"只回应已绑定说话人"都是智能体级配置，共用风格智能体时做不到"只有主人能和这个玩偶说话"。默认不做；需要时升级为"每台设备从风格模板克隆一个智能体"，其他流程不变。
+- **取舍二：换皮套。** 切换智能体后，记忆容器是新的。可通过 `linxapi` 读写记忆片段把旧记忆搬过去，演示里换皮套很少，先不做。
 
 公共类型（`server/internal/id`）：
 
@@ -68,9 +103,20 @@ func Encode(msg Message) ([]byte, error)
 
 **数据结构** 以 `protocol/palpable.schema.json` 为准，Go 类型手写，测试对照 schema。
 
+`hello` 是设备自报家门的消息，开通就靠它：
+```go
+type Hello struct {
+    DeviceID     string      // 设备 MAC，规范化为小写冒号分隔
+    Skin         string      // 外观：dragon / rabbit / bear / cat，缺省用默认风格
+    Firmware     string
+    AudioParams  AudioParams
+    Capabilities []string
+}
+```
+
 | 方向 | 已有 | 待增（见各模块与文末附录） |
 | --- | --- | --- |
-| 上行 | `hello` `wake` `mic.state` `proximity` `location` | `mcp` |
+| 上行 | `hello` `wake` `mic.state` `proximity` `location` | `mcp`；`hello` 增加 `skin`，`device_id` 改为 MAC 格式 |
 | 下行 | `hello.ack` `audio.downlink` `light` `haptic` `sound` `speaker.state` `presence` `error` | `channel.state` `friend.state` `mcp`；`sound.name` 增加 `busy` |
 
 **依赖** 无。
@@ -324,7 +370,6 @@ func (b *Bridge) Interrupt(d DeviceID)               // 中止 AI 播报并停�
 func (b *Bridge) Say(ctx, d DeviceID, text string) error // 不经 LLM，直接合成
 // 回报
 func (b *Bridge) OnAIState(fn func(d DeviceID, s AIState))
-func PseudoMAC(d DeviceID) string
 ```
 
 **数据结构**
@@ -334,9 +379,9 @@ type link struct { dev *gateway.Session; ws *websocket.Conn; ready, listening, s
 type AIState int // AIIdle | AISpeaking
 ```
 
-**现状（M1 已有）** 握手头（MAC、`Protocol-Version`、UUID、`X-Agent-ID`）、`realtime`、`audio.downlink`、灯光映射。
+**现状（M1 已有）** 握手头（`Protocol-Version`、UUID、`X-Agent-ID`）、`realtime`、`audio.downlink`、灯光映射。
 
-**待做** `Forward/Interrupt/Say` 对外接口（现在由 `OnAudio` 直接转发，需改为由 voice 调用）；`hello.agent_params` 注入孩子与小伙伴的名字；重连。
+**待做** `Forward/Interrupt/Say` 对外接口（现在由 `OnAudio` 直接转发，需改为由 voice 调用）；**只在 `device.Ensure` 成功后才拨号**，`Device-Id` 直接用设备自己的 MAC（现在的 `PseudoMAC` 要删除）；`hello.agent_params` 注入孩子与小伙伴的名字；重连。
 
 **依赖** gateway。
 
@@ -390,35 +435,52 @@ type ToolResult struct { Text string; IsError bool }
 
 ## 9. device
 
-**职责** 设备档案与开箱引导：新设备首次上线时让小伙伴问候并请孩子起名，保存名字，登记主人声纹。
+**职责** 设备档案与自动开通：设备上线时按外观选定风格智能体，在灵矽侧注册设备；皮套变了就切换智能体；首次上线时引导孩子给小伙伴起名。
 
 **不负责** 灵矽 REST 细节（linxapi）；不决定好友或频道。
 
 **接口**
 ```go
 type Devices interface {
-    OnOnline(ctx, d DeviceID) error                    // 首次上线触发引导
+    Ensure(ctx, info DeviceInfo) (Profile, error)      // 幂等：无档案则开通，换皮套则切换智能体
     Profile(ctx, d DeviceID) (Profile, error)
-    SetNames(ctx, d DeviceID, doll, kid string) error  // 同时写入灵矽记忆焦点与会话变量
-    MarkOwned(ctx, d DeviceID, speaker string) error
+    SetNames(ctx, d DeviceID, doll, kid string) error  // 同时写入灵矽记忆焦点
+}
+
+type Catalog interface {                                // 风格目录
+    EnsureAll(ctx) error                                // 启动时确保每个风格的智能体存在
+    ForSkin(skin string) Style                          // skin 未知返回默认风格
 }
 ```
 
 **数据结构**
 ```go
+type DeviceInfo struct { MAC, Skin, Firmware string }  // 来自 hello
+
+type Style struct {
+    ID           string  // "dragon" ...
+    Skin         string
+    AgentName    string
+    SystemPrompt string  // 儿童友好、带 {{doll_name}} {{kid_name}} 占位
+    VoiceID      string
+    AgentID      string  // 启动时由 EnsureAll 填充
+}
+
 type Profile struct {
-    ID        DeviceID
-    LinxMAC   string    // 伪 MAC
-    AgentID   string
-    DollName  string
-    KidName   string
-    SpeakerID string    // 灵矽声纹说话人
-    Guardian  GuardianID
-    Stage     Stage     // StageFresh → StageNamed → StageOwned
+    ID       DeviceID    // = MAC
+    Skin     string
+    StyleID  string
+    AgentID  string
+    DollName string
+    KidName  string
+    Guardian GuardianID
+    Stage    Stage       // StageFresh → StageNamed
 }
 ```
 
-**引导流程** `Fresh`：`Say` 问候并问名字 → 孩子说名字 → `Named`：保存、写记忆 → 让孩子再说一句话，从聊天记录取样本登记声纹并绑定 → `Owned`：开启"只回应主人"。
+**开通规则** 见"设备如何组织"。`Ensure` 要幂等：灵矽预注册对已存在的设备返回冲突时，按"已开通"处理并核对绑定的智能体。
+
+**开箱引导** `Fresh`：`Say` 问候并请孩子给小伙伴起名 → 孩子说出名字 → `SetNames` 写入档案与记忆焦点，并更新会话变量 → `Named`。认主（声纹）是可选的后续能力，见"设备如何组织"的取舍一。
 
 **依赖** linxapi、bridge/linx、store。
 
@@ -432,7 +494,9 @@ type Profile struct {
 ```go
 type Client interface {
     CreateAgent(ctx, a AgentSpec) (agentID string, err error)
+    FindAgentByName(ctx, name string) (agentID string, found bool, err error)
     PreregisterDevice(ctx, agentID, mac string) error
+    SwitchAgent(ctx, mac, agentID string, migrateHistory bool) error
     EnableMemory(ctx, agentID string) (memoryID string, err error)
     UpsertAttention(ctx, memoryID, name, description string) (attentionID string, err error)
     SetAttentionValue(ctx, memoryID, mac, attentionID, value string) error
@@ -561,7 +625,8 @@ type WorldEvent struct {
 
 | 表 | 关键字段 |
 | --- | --- |
-| `device` | `device_id` `linx_mac` `agent_id` `speaker_id` `doll_name` `kid_name` `stage` `guardian_id` `created_at` |
+| `device` | `device_id`（MAC） `skin` `style_id` `agent_id` `doll_name` `kid_name` `stage` `guardian_id` `created_at` |
+| `style` | `style_id` `skin` `agent_id`（风格智能体在灵矽的 ID） |
 | `guardian` | `guardian_id` `display_name` |
 | `friendship` | `id` `a` `b` `status` `confirmed_by` `created_at` |
 | `channel_group` | `channel_id` `owner` `code` `expires_at` |

@@ -7,11 +7,11 @@
 | 编号 | 任务 | 依赖 | 验收 |
 | --- | --- | --- | --- |
 | S1 | `store`：SQLite、迁移、各表、仓储接口与假实现 | — | 增删改查有测试；业务模块换假实现不改代码 |
-| S2 | `gateway` 事件组合器；`bridge/linx` 改为对外提供 `Forward / Interrupt / Say / OnAIState`；`hello.agent_params` 注入名字；重连 | M1 | 多个模块能同时订阅设备事件；假灵矽下 `Say` 不经 LLM 直出语音；断线后自动重连 |
+| S2 | `gateway` 事件组合器；协议 `hello` 增加 `skin`、`device_id` 改 MAC 格式；`bridge/linx` 改为对外提供 `Forward / Interrupt / Say / OnAIState`、删除 `PseudoMAC`、`Device-Id` 用设备自身 MAC；`hello.agent_params` 注入名字；重连 | M1 | 多个模块能同时订阅设备事件；假灵矽下 `Say` 不经 LLM 直出语音；断线后自动重连 |
 | S3 | `relation`：状态机、`proximity` 防抖、`AreFriends` 缓存 | S1 | 靠近 1.5 秒生成 pending；确认后 `AreFriends` 为真；解除立即为假并发事件 |
 | S4 | `channel` + `zone`：区域与群、4 位码、前台群、滞回 | S1 | 入区自动询问；码过期失效；错码限流；切群发 `channel.state` |
 | S5 | **`voice`：上行路由、发言权、下行转发** | S2、S3、S4 | 见下方"语音验收" |
-| S6 | `linxapi` + `device`：开通智能体与记忆、预注册、起名写入记忆、登记并绑定声纹、"只回应主人" | S1、S2 | 首次上线触发问候；说名字后保存；声纹登记成功；非主人说话玩偶不回应 |
+| S6 | `linxapi` + `device`：风格目录与 `EnsureAll`；设备上线按 `skin` 自动开通（预注册）；换皮套切换智能体；开箱起名写入记忆 | S1、S2 | 新 MAC 上线后自动绑定对应风格智能体并能对话；同一 MAC 重复上线不重复开通；换 `skin` 后切换到新风格；开通失败时设备收到 `error` 且仍可进频道 |
 | S7 | `bridge/mcp`：MCP 代理与业务工具 | S2、S4 | 假灵矽发 `tools/list` 得到合并后的列表；`tools/call` 按名字路由；"创建群聊"拿到 4 位码并播报 |
 | S8 | `history` + `share` | S1、S3、S4、S7 | 今日遇到的小朋友、分享、聊天可查；分享后好友与本人都听到描述 |
 | S9 | `parentapi` | S3、S8 | 接口有测试；未授权与跨家长访问被拒绝 |
