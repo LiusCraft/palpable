@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+html, body, #root { height: 100%; margin: 0; }
+body { background: #fdf6ec; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }

@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/LiusCraft/palpable/protocol/palpable.schema.json",
+  "title": "PalpableMessage",
+  "description": "可感设备协议（文本帧）。音频为独立的二进制 Opus 帧，不在此 schema 内。设备↔服务端所有 JSON 消息都必须匹配 oneOf 中的一项。",
+  "oneOf": [
+    { "$ref": "#/$defs/Hello" },
+    { "$ref": "#/$defs/Wake" },
+    { "$ref": "#/$defs/MicState" },
+    { "$ref": "#/$defs/Proximity" },
+    { "$ref": "#/$defs/Location" },
+    { "$ref": "#/$defs/HelloAck" },
+    { "$ref": "#/$defs/Light" },
+    { "$ref": "#/$defs/Haptic" },
+    { "$ref": "#/$defs/Sound" },
+    { "$ref": "#/$defs/SpeakerState" },
+    { "$ref": "#/$defs/Presence" },
+    { "$ref": "#/$defs/Error" }
+  ],
+  "$defs": {
+    "AudioParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "sample_rate", "channels", "frame_duration"],
+      "properties": {
+        "format": { "const": "opus" },
+        "sample_rate": { "const": 16000 },
+        "channels": { "const": 1 },
+        "frame_duration": { "const": 60, "description": "单帧毫秒数" }
+      }
+    },
+    "Capability": {
+      "enum": ["mic", "speaker", "light", "haptic", "proximity", "location", "wake"]
+    },
+    "LightState": {
+      "enum": ["idle", "listening", "thinking", "speaking", "peer_talking", "muted"]
+    },
+    "Hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "device_id", "audio_params", "capabilities"],
+      "properties": {
+        "type": { "const": "hello" },
+        "device_id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$" },
+        "firmware": { "type": "string", "maxLength": 64 },
+        "audio_params": { "$ref": "#/$defs/AudioParams" },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Capability" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "Wake": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "source"],
+      "properties": {
+        "type": { "const": "wake" },
+        "source": { "enum": ["voice", "touch"] }
+      }
+    },
+    "MicState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "state"],
+      "properties": {
+        "type": { "const": "mic.state" },
+        "state": { "enum": ["start", "stop"] }
+      }
+    },
+    "Proximity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "peers"],
+      "properties": {
+        "type": { "const": "proximity" },
+        "peers": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["device_id", "strength"],
+            "properties": {
+              "device_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "strength": { "type": "number", "minimum": 0, "maximum": 1, "description": "归一化信号强度，越大越近" }
+            }
+          }
+        }
+      }
+    },
+    "Location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "lat", "lng"],
+      "properties": {
+        "type": { "const": "location" },
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lng": { "type": "number", "minimum": -180, "maximum": 180 }
+      }
+    },
+    "HelloAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "audio_params"],
+      "properties": {
+        "type": { "const": "hello.ack" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "audio_params": { "$ref": "#/$defs/AudioParams" }
+      }
+    },
+    "Light": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "state"],
+      "properties": {
+        "type": { "const": "light" },
+        "state": { "$ref": "#/$defs/LightState" },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "pattern": { "enum": ["solid", "breathe", "pulse"] }
+      }
+    },
+    "Haptic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "pattern"],
+      "properties": {
+        "type": { "const": "haptic" },
+        "pattern": { "enum": ["tap", "double_tap", "long"] }
+      }
+    },
+    "Sound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "sound" },
+        "name": { "enum": ["connected", "joined", "left", "switched", "error"] }
+      }
+    },
+    "SpeakerState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "state", "source"],
+      "properties": {
+        "type": { "const": "speaker.state" },
+        "state": { "enum": ["start", "stop"] },
+        "source": { "enum": ["ai", "peer"] },
+        "from": { "type": "string", "description": "source 为 peer 时的发言设备" }
+      }
+    },
+    "Presence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "event", "device_id", "channel"],
+      "properties": {
+        "type": { "const": "presence" },
+        "event": { "enum": ["join", "leave"] },
+        "device_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "maxLength": 32, "description": "玩偶的名字，供设备播报" },
+        "channel": { "type": "string", "minLength": 1 }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "enum": ["bad_message", "unsupported", "unauthorized", "internal"] },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}
