@@ -4,13 +4,17 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
+	"github.com/LiusCraft/palpable/server/internal/bridge/mcp"
 	"github.com/LiusCraft/palpable/server/internal/channel"
 	"github.com/LiusCraft/palpable/server/internal/config"
 	"github.com/LiusCraft/palpable/server/internal/device"
@@ -31,6 +35,8 @@ type ai interface {
 	Close(d id.DeviceID)
 	Say(ctx context.Context, d id.DeviceID, text string) error
 	OnAIState(fn func(d id.DeviceID, s linx.AIState))
+	SendMCP(d id.DeviceID, payload json.RawMessage) error
+	OnMCP(fn func(d id.DeviceID, payload json.RawMessage))
 }
 
 // noAI 在未配置灵矽时顶替 voice.AI：不可用，音频不去 AI。
@@ -51,7 +57,10 @@ type App struct {
 	chans   *channel.Channels
 	zones   *zone.Zones
 	voice   *voice.Router
+	mcp     *mcp.Proxy
 	gw      *gateway.Gateway
+
+	speaking sync.Map // id.DeviceID → bool：AI 是否正在说话，交棒前等它说完
 }
 
 var _ gateway.Handler = (*App)(nil)
@@ -107,14 +116,20 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		aiPort = d.ai
 	}
 	a.voice = voice.New(chans, rel, aiPort, a, func(dev id.DeviceID) string { return a.dollName(context.Background(), dev) })
+	a.mcp = mcp.New(a.toLinx, a.toDevice, a.hasMCP)
+	for _, t := range mcp.BusinessTools(mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel}) {
+		a.mcp.Register(t)
+	}
 	if d.ai != nil {
 		d.ai.OnAIState(func(dev id.DeviceID, s linx.AIState) {
+			a.speaking.Store(dev, s == linx.AISpeaking)
 			if s == linx.AISpeaking {
 				a.voice.OnAIState(dev, voice.AISpeaking)
 			} else {
 				a.voice.OnAIState(dev, voice.AIIdle)
 			}
 		})
+		d.ai.OnMCP(a.mcp.OnLinxMCP)
 	}
 	a.gw = gateway.New(a, allowDevOrigin)
 	return a, nil
@@ -128,6 +143,7 @@ func (a *App) Start(ctx context.Context) {
 	go a.zoneEvents(ctx)
 	go a.voice.Run(ctx)
 	go a.voiceEvents(ctx)
+	go a.deviceEvents(ctx)
 	go a.sweepGroups(ctx)
 }
 
@@ -264,6 +280,8 @@ func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 		if err := a.rel.OnProximity(s.Context(), s.DeviceID(), peers); err != nil {
 			slog.Warn("proximity", "device_id", s.DeviceID(), "error", err)
 		}
+	case *protocol.Mcp:
+		a.mcp.OnDeviceMCP(s.DeviceID(), m.Payload)
 	case *protocol.Location:
 		if err := a.zones.OnLocation(s.Context(), s.DeviceID(), m.Lat, m.Lng); err != nil {
 			slog.Warn("location", "device_id", s.DeviceID(), "error", err)
@@ -279,6 +297,8 @@ func (a *App) OnAudio(s *gateway.Session, frame []byte) {
 
 func (a *App) OnDisconnect(s *gateway.Session) {
 	a.voice.OnDisconnect(s.DeviceID())
+	a.mcp.Forget(s.DeviceID())
+	a.speaking.Delete(s.DeviceID())
 	if a.ai != nil {
 		a.ai.Close(s.DeviceID())
 	}
@@ -489,5 +509,82 @@ func (a *App) voiceEvents(ctx context.Context) {
 func (a *App) onVoice(e voice.Event) {
 	if e.Kind == voice.BurstStarted {
 		slog.Debug("burst started", "channel", e.Burst.Channel, "speaker", e.Burst.Speaker, "listeners", len(e.Burst.Listeners))
+	}
+}
+
+func (a *App) toLinx(d id.DeviceID, payload json.RawMessage) error {
+	if a.ai == nil {
+		return errors.New("ai disabled")
+	}
+	return a.ai.SendMCP(d, payload)
+}
+
+func (a *App) toDevice(d id.DeviceID, payload json.RawMessage) error {
+	sess, ok := a.gw.Session(d)
+	if !ok {
+		return errors.New("device offline")
+	}
+	return sess.Send(&protocol.Mcp{Type: protocol.TypeMcp, Payload: payload})
+}
+
+func (a *App) hasMCP(d id.DeviceID) bool {
+	sess, ok := a.gw.Session(d)
+	return ok && slices.Contains(sess.Capabilities(), "mcp")
+}
+
+func (a *App) deviceEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-a.devices.Subscribe():
+			go a.handoff(e)
+		}
+	}
+}
+
+// handoff 起名后交棒：等小可说完告别 → 切到风格智能体 → 换会话 → 新小伙伴用名字打招呼。
+// 失败时设备停在 named，下次上线重试。
+func (a *App) handoff(e device.Named) {
+	sess, ok := a.gw.Session(e.Device)
+	if !ok {
+		return
+	}
+	ctx := sess.Context()
+	a.waitAISilent(ctx, e.Device)
+	p, err := a.devices.Handoff(ctx, e.Device)
+	if err != nil {
+		slog.Warn("handoff", "device_id", e.Device, "error", err)
+		return
+	}
+	if a.ai == nil {
+		return
+	}
+	a.ai.Close(e.Device)
+	if err := a.ai.Open(ctx, sess, persona(p)); err != nil {
+		slog.Warn("reopen ai after handoff", "device_id", e.Device, "error", err)
+		return
+	}
+	if err := a.ai.Say(ctx, e.Device, fmt.Sprintf(sayHandoff, p.KidName, p.DollName)); err != nil {
+		slog.Warn("greet after handoff", "device_id", e.Device, "error", err)
+	}
+}
+
+// waitAISilent 等引导智能体说完最后一句：先给它一点时间开口，再等它说完；最长 20 秒。
+func (a *App) waitAISilent(ctx context.Context, d id.DeviceID) {
+	speaking := func() bool { v, _ := a.speaking.Load(d); b, _ := v.(bool); return b }
+	start := time.Now()
+	started := speaking()
+	for time.Since(start) < 20*time.Second {
+		if s := speaking(); s {
+			started = true
+		} else if started || time.Since(start) > 4*time.Second {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 }

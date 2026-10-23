@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -23,7 +24,11 @@ const mac id.DeviceID = "02:00:00:00:00:01"
 const helloJSON = `{"type":"hello","device_id":"02:00:00:00:00:01","skin":"dragon","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":["mic","speaker"]}`
 
 // fakeAI 记录 app 对 AI 的调用，验证分发表。
-type fakeAI struct{ calls chan string }
+type fakeAI struct {
+	calls   chan string
+	aiState func(id.DeviceID, linx.AIState)
+	onMCP   func(id.DeviceID, json.RawMessage)
+}
 
 func (f *fakeAI) Open(_ context.Context, dev linx.DeviceLink, p linx.Persona) error {
 	f.calls <- fmt.Sprintf("open %s agent=%q", dev.DeviceID(), p.AgentID)
@@ -33,10 +38,15 @@ func (f *fakeAI) Close(d id.DeviceID) { f.calls <- "close " + string(d) }
 func (f *fakeAI) Forward(d id.DeviceID, frame []byte) {
 	f.calls <- fmt.Sprintf("forward %s %d", d, len(frame))
 }
-func (f *fakeAI) Listen(d id.DeviceID, on bool)             { f.calls <- fmt.Sprintf("listen %s %v", d, on) }
-func (f *fakeAI) Interrupt(d id.DeviceID)                   { f.calls <- "interrupt " + string(d) }
-func (f *fakeAI) Available(id.DeviceID) bool                { return true }
-func (f *fakeAI) OnAIState(func(id.DeviceID, linx.AIState)) {}
+func (f *fakeAI) Listen(d id.DeviceID, on bool)                { f.calls <- fmt.Sprintf("listen %s %v", d, on) }
+func (f *fakeAI) Interrupt(d id.DeviceID)                      { f.calls <- "interrupt " + string(d) }
+func (f *fakeAI) Available(id.DeviceID) bool                   { return true }
+func (f *fakeAI) OnAIState(fn func(id.DeviceID, linx.AIState)) { f.aiState = fn }
+func (f *fakeAI) SendMCP(d id.DeviceID, p json.RawMessage) error {
+	f.calls <- "mcp " + string(d) + " " + string(p)
+	return nil
+}
+func (f *fakeAI) OnMCP(fn func(id.DeviceID, json.RawMessage)) { f.onMCP = fn }
 func (f *fakeAI) Say(_ context.Context, d id.DeviceID, text string) error {
 	f.calls <- fmt.Sprintf("say %s %s", d, text)
 	return nil
@@ -275,5 +285,36 @@ func TestEnteringParkAsksToJoin(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no Say")
+	}
+}
+
+// 起名 → 小可说完 → 交棒到风格智能体 → 新小伙伴用名字打招呼。
+func TestNamingHandsOffToStyleAgent(t *testing.T) {
+	f := &fakeAI{calls: make(chan string, 32)}
+	a := mustApp(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.Start(ctx)
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	connect(t, srv, mac)
+	f.wantPrefix(t, "open ")
+	f.wantPrefix(t, "say ")
+
+	// 灵矽调用业务工具 set_names。
+	f.onMCP(mac, json.RawMessage(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"self.profile.set_names","arguments":{"doll_name":"小龙","kid_name":"朵朵"}}}`))
+	f.wantPrefix(t, `mcp 02:00:00:00:00:01 {"jsonrpc":"2.0","id":7,"result":{"content":[{"text":"记住啦`)
+
+	// 小可说告别语。
+	f.aiState(mac, linx.AISpeaking)
+	time.Sleep(200 * time.Millisecond)
+	f.aiState(mac, linx.AIIdle)
+
+	f.want(t, "close "+string(mac))
+	f.wantPrefix(t, `open 02:00:00:00:00:01 agent="`+a.catalog.ForSkin("dragon").AgentID)
+	f.wantPrefix(t, "say 02:00:00:00:00:01 你好呀朵朵！我是小龙")
+	p, _ := a.devices.Profile(ctx, mac)
+	if p.Stage != device.StageReady || p.StyleID != "dragon" {
+		t.Fatalf("profile after handoff = %+v", p)
 	}
 }
