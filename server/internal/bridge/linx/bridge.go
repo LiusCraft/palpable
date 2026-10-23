@@ -75,6 +75,7 @@ type Bridge struct {
 	links  sync.Map // id.DeviceID -> *link；Forward 是热路径，读不加锁
 
 	onAIState atomic.Pointer[func(id.DeviceID, AIState)]
+	onMCP     atomic.Pointer[func(id.DeviceID, json.RawMessage)]
 
 	backoffMin, backoffMax time.Duration
 }
@@ -90,6 +91,28 @@ func New(cfg Config) *Bridge {
 
 // OnAIState 注册 AI 说话状态的回调；回调在会话读循环里调用，不得阻塞。
 func (b *Bridge) OnAIState(fn func(d id.DeviceID, s AIState)) { b.onAIState.Store(&fn) }
+
+// OnMCP 注册灵矽发来的 mcp 消息的回调（交给 bridge/mcp 代理）；在会话读循环里调用，不得阻塞。
+func (b *Bridge) OnMCP(fn func(d id.DeviceID, payload json.RawMessage)) { b.onMCP.Store(&fn) }
+
+// SendMCP 把代理的 JSON-RPC 回复发给灵矽；会话未连上时返回 ErrUnavailable。
+func (b *Bridge) SendMCP(d id.DeviceID, payload json.RawMessage) error {
+	l := b.link(d)
+	if l == nil {
+		return fmt.Errorf("send mcp to %s: %w", d, ErrUnavailable)
+	}
+	c := l.cur.Load()
+	if c == nil {
+		return fmt.Errorf("send mcp to %s: %w", d, ErrUnavailable)
+	}
+	ctx, cancel := context.WithTimeout(l.ctx, writeTimeout)
+	defer cancel()
+	msg := map[string]any{"type": "mcp", "session_id": c.session, "payload": payload}
+	if err := c.sendJSON(ctx, msg); err != nil {
+		return fmt.Errorf("send mcp to %s: %w", d, err)
+	}
+	return nil
+}
 
 // Open 为设备开一条会话并在后台连接；会话随 dev.Context() 结束。
 // 交棒换智能体时先 Close 再用新的 Persona Open。
@@ -362,7 +385,8 @@ func (l *link) hello() map[string]any {
 		"audio_params": map[string]any{
 			"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60,
 		},
-		"features": map[string]any{"mcp": false},
+		// 总是声明 mcp：设备自身不支持时，代理仍向灵矽提供业务工具。
+		"features": map[string]any{"mcp": true},
 		// 名字每次会话注入，起名后不必改智能体配置；空值也要发，否则提示词里会留下 {{占位符}}。
 		"agent_params": map[string]any{
 			"custom_replace_prompt": map[string]string{
@@ -522,6 +546,10 @@ func (l *link) onLinxText(data []byte) {
 		// 一句话识别完成，AI 开始思考。文本本身不转发给设备（设备没有屏幕）。
 		if m.Text != "" {
 			l.light("thinking")
+		}
+	case "mcp":
+		if fn := l.b.onMCP.Load(); fn != nil && len(m.Payload) > 0 {
+			(*fn)(l.dev.DeviceID(), m.Payload)
 		}
 	case "tts":
 		switch m.State {

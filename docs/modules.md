@@ -296,6 +296,7 @@ type AIState int // AIIdle | AISpeaking
 - `hello.agent_params.custom_replace_prompt` 注入 `doll_name`、`kid_name`，引导智能体另注入 `voice_step`（是否做声音登记）；起名后在下次会话生效，当前会话里 AI 已从对话中得知名字。交棒时 `Close` 再 `Open` 即换智能体，`Open` 总是读档案里最新的 `agent_id`。
 - 灵矽断线后指数退避重连（1 秒起，最长 30 秒），首次连不上时向设备发一次 `error`；设备断开时停止重连并释放所有 goroutine，`Close` 返回时会话已完全退出。
 - 对灵矽的写只经一个写 goroutine 与有界队列；`Forward` 不加锁，队列满时丢帧。
+- 握手 `hello.features.mcp` 总为真：设备不支持 MCP 时，代理仍向灵矽提供业务工具。灵矽的 `mcp` 消息经 `OnMCP` 交给 bridge/mcp，回复经 `SendMCP` 带上会话 `session_id` 发回。
 - `Say` 用 `listen{state: detect, text_response}` 播报，未连上时等到连上；`Interrupt` 发 `abort`，并丢弃本轮剩余 TTS 帧直到下一次 `tts start`。
 
 **依赖** protocol、id；端口 `DeviceLink`。
