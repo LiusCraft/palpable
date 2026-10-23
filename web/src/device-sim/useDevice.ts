@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Hello, LightState, MAC, PalpableMessage } from '../shared/protocol.gen'
+import { copy } from '../ui/copy'
 import { audioSupported, MicCapture, Player } from './audio'
 
 export type Link = 'offline' | 'connecting' | 'online'
@@ -100,7 +101,7 @@ export const useDevice = create<DeviceState>((set, get) => ({
       return
     }
     if (!audioSupported()) {
-      set({ lastError: '当前浏览器不支持 WebCodecs，请使用 Chrome / Edge' })
+      set({ lastError: copy.device.errorUnsupported })
       return
     }
     try {
@@ -108,7 +109,7 @@ export const useDevice = create<DeviceState>((set, get) => ({
         if (socket?.readyState === WebSocket.OPEN) socket.send(frame)
       })
     } catch (e) {
-      set({ lastError: `无法打开麦克风：${e instanceof Error ? e.message : String(e)}` })
+      set({ lastError: copy.device.errorMic(e instanceof Error ? e.message : String(e)) })
       return
     }
     socket?.send(JSON.stringify({ type: 'mic.state', state: 'start' }))

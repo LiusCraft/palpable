@@ -4,8 +4,7 @@ import { OrbitControls } from '@react-three/drei'
 import { deviceMAC, deviceSkin } from './device-sim/identity'
 import { useDevice } from './device-sim/useDevice'
 import { Plush } from './plush/Plush'
-
-const LINK_TEXT = { offline: '未连接', connecting: '连接中…', online: '已上线' } as const
+import { copy } from './ui/copy'
 
 export default function App() {
   const { link, light, lastError, sessionId, micOn, connect, disconnect, wake, setMic } = useDevice()
@@ -23,7 +22,7 @@ export default function App() {
 
       <div className="absolute left-4 top-4 rounded-2xl bg-white/80 p-4 text-sm shadow">
         <div className="font-bold">可感 Palpable · 设备 {deviceId}</div>
-        <div>状态：{LINK_TEXT[link]}（灯：{light}）</div>
+        <div>状态：{copy.link[link]}（灯：{light}）</div>
         {sessionId && <div className="text-xs text-gray-500">session {sessionId}</div>}
         {lastError && <div className="text-red-600">{lastError}</div>}
         <button
@@ -37,7 +36,7 @@ export default function App() {
             className="ml-2 mt-2 rounded-full bg-pink-500 px-4 py-1 text-white"
             onClick={() => void setMic(!micOn)}
           >
-            {micOn ? '停止说话' : '开始说话'}
+            {micOn ? copy.desk.micStop : copy.desk.micOff}
           </button>
         )}
       </div>
