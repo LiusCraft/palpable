@@ -9,6 +9,7 @@ import { DevicePlush } from '../../plush/DevicePlush'
 import { LIGHT_COLORS } from '../../plush/looks'
 import { copy } from '../../ui/copy'
 import { Button, Chip, Wave } from '../../ui/components'
+import { DemoNaming } from './DemoNaming'
 import { MicControls } from './MicControls'
 
 // 桌面场景：起名引导与一对一聊天的画面。设备没有屏幕，这里的对话气泡只表现"谁在说话"，
@@ -125,6 +126,7 @@ export function Desk({ device, onPark }: { device: VirtualDevice; onPark: () => 
         </div>
 
         {s.lastError && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">{s.lastError}</p>}
+        {s.link === 'online' && !name && s.lastError && <DemoNaming mac={s.mac} />}
         <MicControls device={device} />
         <Button className="mt-3 self-end" onClick={onPark}>
           {copy.desk.toPark} →

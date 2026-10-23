@@ -15,11 +15,11 @@ export function lookAround(mac: string): string {
 }
 
 /**
- * 模拟 BLE 信号强度：距离越近越强。演示地图约 1 像素 1 米，
- * 两只玩偶在地图上挨在一起（≤ 30 米）时强度达到 0.8，满足服务端"贴近"的判定。
+ * 模拟 BLE 信号强度：距离越近越强。演示地图约 1 像素 1 米，头像直径约 48 像素，
+ * 两只玩偶在地图上碰到一起（≤ 50 米）时强度达到 0.8，满足服务端"贴近"的判定。
  */
 export function strengthAt(meters: number): number {
-  return Math.max(0, Math.min(1, 1 - meters / 150))
+  return Math.max(0, Math.min(1, 1 - meters / 250))
 }
 
 const EARTH = 6371000

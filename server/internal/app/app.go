@@ -173,6 +173,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("/ws", a.gw)
 	if a.world != nil {
 		mux.Handle("/world", a.world)
+		mux.HandleFunc("POST /world/tool", a.demoTool)
 	}
 	if a.demo.ParentToken != "" && a.demo.Guardian != "" {
 		online := func(d id.DeviceID) bool { _, ok := a.gw.Session(d); return ok }
@@ -665,4 +666,33 @@ func (a *App) publish(e world.Event) {
 	if a.world != nil {
 		a.world.Publish(e)
 	}
+}
+
+// demoTool 是演示遥控：代替孩子对小伙伴说出指令（比如"加入"），执行与 AI 调用相同的业务工具，
+// 规则仍由领域模块裁决（不在公园就加入不了）。只在演示模式注册，只接受在线设备。
+func (a *App) demoTool(w http.ResponseWriter, r *http.Request) {
+	if !allowDevOrigin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Device    id.DeviceID     `json:"device"`
+		Tool      string          `json:"tool"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if _, online := a.gw.Session(req.Device); !online {
+		http.Error(w, "device offline", http.StatusNotFound)
+		return
+	}
+	res, err := a.mcp.Call(r.Context(), req.Device, req.Tool, req.Arguments)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"text": res.Text, "is_error": res.IsError})
 }

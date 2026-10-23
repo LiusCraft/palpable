@@ -244,7 +244,7 @@ func (d *Devices) Profile(ctx context.Context, dev id.DeviceID) (Profile, error)
 func (d *Devices) SetNames(ctx context.Context, dev id.DeviceID, doll, kid string) error {
 	doll, kid = strings.TrimSpace(doll), strings.TrimSpace(kid)
 	for _, n := range []string{doll, kid} {
-		if n == "" || utf8.RuneCountInString(n) > maxNameRunes {
+		if n == "" || !utf8.ValidString(n) || utf8.RuneCountInString(n) > maxNameRunes {
 			return ErrBadName
 		}
 	}

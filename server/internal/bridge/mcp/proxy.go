@@ -91,6 +91,18 @@ func (p *Proxy) Register(t Tool) {
 	p.byName[t.Name] = t
 }
 
+// Call 直接执行一个业务工具，供演示遥控代替孩子说出指令；与 AI 调用走同一段业务代码。
+func (p *Proxy) Call(ctx context.Context, d id.DeviceID, name string, args json.RawMessage) (ToolResult, error) {
+	t, ok := p.byName[name]
+	if !ok {
+		return ToolResult{}, fmt.Errorf("unknown business tool %q", name)
+	}
+	if len(args) == 0 {
+		args = json.RawMessage("{}")
+	}
+	return t.Call(ctx, d, args)
+}
+
 // Forget 在设备断线时清理。
 func (p *Proxy) Forget(d id.DeviceID) {
 	p.mu.Lock()
