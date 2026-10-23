@@ -12,4 +12,5 @@
 - 协议类型生成：`cd web && pnpm run gen:protocol`
 - 全量检查：`make check`（包含协议类型生成、前端 lint、Go vet/test 和前后端构建；Windows 没有 make 时，请在 `web`、`server` 目录分别执行对应命令）
 
-文档：[AGENTS.md](AGENTS.md)（规则）、[docs/architecture.md](docs/architecture.md)（架构与模块）、[protocol/README.md](protocol/README.md)（设备协议）。
+
+文档：从 [docs/README.md](docs/README.md)（文档地图与术语表）开始；规则见 [AGENTS.md](AGENTS.md)，设备协议见 [protocol/README.md](protocol/README.md)。

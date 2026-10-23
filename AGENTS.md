@@ -24,13 +24,14 @@ Web 模拟器与未来固件是**同一个协议的两个客户端**。所有业
 ```
 palpable/
 ├── protocol/          设备协议 schema 与文档（单一事实来源）
-├── server/            Go 后端（见 docs/architecture.md）
-│   ├── cmd/palpabled/ 入口
-│   └── internal/      gateway / bridge / channel / relation / zone / identity / guardian / store
+├── server/            Go 后端（架构见 docs/architecture.md，模块规格见 docs/modules.md）
+│   ├── cmd/palpabled/ 入口，只读配置并调用 app 组装
+│   └── internal/      接入：gateway / parentapi / world；编排：app；能力：voice / bridge；
+│                      领域：device / relation / channel / zone / history / share；基础：store / linxapi / protocol / id
 ├── web/               前端
 │   └── src/           device-sim / scenes / map / ui / shared
 ├── firmware/          预留：未来硬件固件，只实现 protocol/ 的设备端
-└── docs/              架构、产品、演示脚本
+└── docs/              产品、架构、模块、灵矽对接、路线图（入口：docs/README.md）
 ```
 
 ## 编码规则
@@ -39,6 +40,8 @@ palpable/
 - 提交信息用中文或英文均可，一次提交只做一件事；不得提交 `.env`、密钥、声纹原始音频。
 - 注释只写"为什么"，不复述代码。命名跟随所在目录的现有风格。
 - 每个模块对外只暴露接口；跨模块调用走接口，不直接读对方内部状态。
+- 依赖只能向下（接入 → 编排 → 能力 → 领域 → 基础）；下层需要上层能力时声明端口接口，由 `app` 注入。领域层只发事件，不发设备消息。
+- 文档一件事只写一处，完成状态只写在 `docs/tasks.md`；改设计时同步改对应文档。
 
 Go
 - 每次修改后执行 `go build ./... && go vet ./... && go test ./...`，全部通过才算完成。
