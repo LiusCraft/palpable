@@ -128,7 +128,7 @@ func (w *World) Publish(e WorldEvent) // 由 app 调用
 
 | 设备事件 | 调用 |
 | --- | --- |
-| 连接建立（`hello` 已通过） | `device.Ensure` → `bridge/linx.Open`；`stage=fresh` 时 `Say` 引导起名。失败时下发 `error` |
+| 连接建立（`hello` 已通过） | `device.Ensure` → `bridge/linx.Open`；`stage=fresh` 时 `Say` 由引导智能体欢迎并请孩子起名；`stage=named` 时直接 `Handoff`。失败时下发 `error` |
 | `mic.state`、`wake`、音频帧 | `voice` |
 | `proximity` | `relation.OnProximity` |
 | `location` | `zone.OnLocation`；同时 `world.Publish` |
@@ -141,7 +141,8 @@ func (w *World) Publish(e WorldEvent) // 由 app 调用
 | --- | --- |
 | `channel` Joined / Left / Switched | 本设备 `channel.state` + `sound`；同频道好友 `presence`（成员先经 `relation.FilterFriends`）；`world`、`history` |
 | `relation` Proposed / Confirmed / Removed | 双方 `friend.state` + `haptic`；Removed 同时通知 `voice` |
-| `zone` Entered | `Say` 询问是否加入区域频道 |
+| `zone` Entered | `Say` 询问是否加入区域频道；`stage` 未到 `ready` 的设备忽略 |
+| `device` Named | 等 `OnAIState` 回到 idle → `device.Handoff` → `bridge/linx.Close` + `Open`（新 `agent_id`）→ `Say` 第一句问候 |
 | `voice` BurstStarted / BurstEnded | `world` |
 
 **依赖** 下层所有模块。代码放 `server/internal/app`，`cmd/palpabled/main.go` 只读配置并调用它。
@@ -282,7 +283,7 @@ type AIState int // AIIdle | AISpeaking
 
 **规则**
 - 握手头：`Authorization`、`Protocol-Version: 1`、`Device-Id`（设备自身 MAC）、`Client-Id`（UUID）、`X-Agent-ID`（档案中的智能体）。`listen.mode=realtime`。
-- `hello.agent_params.custom_replace_prompt` 注入 `doll_name`、`kid_name`；起名后在下次会话生效，当前会话里 AI 已从对话中得知名字。
+- `hello.agent_params.custom_replace_prompt` 注入 `doll_name`、`kid_name`，引导智能体另注入 `voice_step`（是否做声音登记）；起名后在下次会话生效，当前会话里 AI 已从对话中得知名字。交棒时 `Close` 再 `Open` 即换智能体，`Open` 总是读档案里最新的 `agent_id`。
 - 灵矽断线后指数退避重连，设备断开时停止重连并释放所有 goroutine。
 
 **依赖** protocol、id、device（只读 `Profile` 类型）；端口 `DeviceLink`。
@@ -321,6 +322,7 @@ func (p *Proxy) OnLinxMCP(d id.DeviceID, payload json.RawMessage)   // 灵矽 �
 | 工具 | 参数 | 调用 | 返回给 AI |
 | --- | --- | --- | --- |
 | `self.profile.set_names` | `doll_name` `kid_name` | `device.SetNames` | 已记住 |
+| `self.voiceprint.enroll` | — | `device.EnrollVoice` | 登记成功，或原因（未同意 / 没取到声音）；仅引导智能体会被提示使用 |
 | `self.zone.join` | — | `zone.JoinCurrent` | 成功，或不在任何区域 |
 | `self.group.create` | `ttl`：trip / today / forever | `channel.CreateGroup` | 4 位码，并让设备播报 |
 | `self.group.join` | `code` | `channel.JoinGroup` | 成功或失败原因 |
@@ -338,21 +340,25 @@ func (p *Proxy) OnLinxMCP(d id.DeviceID, payload json.RawMessage)   // 灵矽 �
 
 ### device
 
-**职责** 设备档案与自动开通：按皮套选风格智能体并在灵矽注册；换皮套时切换智能体；记录小伙伴与孩子的名字。流程见 [architecture.md §4](architecture.md#4-设备如何组织)。
+**职责** 设备档案与自动开通：新设备先绑定引导智能体；起名后交棒，按皮套选风格智能体并切换；换皮套时切换智能体；记录小伙伴与孩子的名字；登记孩子的声纹。流程见 [architecture.md §4](architecture.md#4-设备如何组织)。
 
-**不负责** 灵矽 REST 细节（linxapi）；打招呼与语音交互（由 app 调 bridge/linx）；好友与频道。
+**不负责** 灵矽 REST 细节（linxapi）；打招呼与语音交互（由 app 调 bridge/linx）；重连灵矽会话（交棒后由 app 通知 bridge/linx）；好友与频道。
 
 **接口**
 ```go
 type Devices interface {
     Ensure(ctx context.Context, info DeviceInfo) (Profile, error) // 幂等
     Profile(ctx context.Context, d id.DeviceID) (Profile, error)
-    SetNames(ctx context.Context, d id.DeviceID, doll, kid string) error // 写档案，并写灵矽记忆焦点
+    SetNames(ctx context.Context, d id.DeviceID, doll, kid string) error // 写档案，stage=named，发 Named 事件
+    Handoff(ctx context.Context, d id.DeviceID) (Profile, error)         // 幂等：切到风格智能体，写记忆焦点，stage=ready
+    EnrollVoice(ctx context.Context, d id.DeviceID) error                // 无监护人同意返回 ErrNoConsent
     Bind(ctx context.Context, d id.DeviceID, g id.GuardianID) error
+    Subscribe() <-chan Event // Named
 }
 
 type Catalog interface {
-    EnsureAll(ctx context.Context) error // 启动时确保每个风格的智能体存在
+    EnsureAll(ctx context.Context) error // 启动时确保引导智能体与每个风格的智能体存在
+    Onboarding() Style                   // 引导智能体，不随 skin 变化
     ForSkin(skin string) Style           // 未知 skin 返回默认风格
 }
 ```
@@ -362,29 +368,35 @@ type Catalog interface {
 type DeviceInfo struct { MAC, Skin, Firmware string } // 来自 hello
 
 type Style struct {
-    ID           string // "dragon" ...
-    Skin         string
-    AgentName    string
-    SystemPrompt string // 儿童友好，带 {{doll_name}} {{kid_name}} 占位
+    ID           string // "dragon" ...；引导智能体为 "welcome"
+    Skin         string // 引导智能体为空
+    AgentName    string // 引导智能体暂定"小可"
+    SystemPrompt string // 儿童友好，带 {{doll_name}} {{kid_name}} 占位；引导智能体另带 {{voice_step}}
     VoiceID      string
     AgentID      string // EnsureAll 填充
 }
 
-type Stage int // StageFresh → StageNamed
+type Stage int // StageFresh → StageNamed → StageReady
 
 type Profile struct {
-    ID       id.DeviceID // = MAC
-    Skin     string
-    StyleID  string
-    AgentID  string
-    DollName string
-    KidName  string
-    Guardian id.GuardianID
-    Stage    Stage
+    ID           id.DeviceID // = MAC
+    Skin         string
+    StyleID      string      // fresh / named 时为 "welcome"，ready 后为风格
+    AgentID      string      // 当前绑定的智能体
+    DollName     string
+    KidName      string
+    Guardian     id.GuardianID
+    VoiceConsent bool   // 监护人是否同意声纹登记
+    SpeakerID    string // 声纹说话人，未登记为空；不绑定到智能体
+    Stage        Stage
 }
 ```
 
-**规则** 灵矽预注册对已存在的设备返回冲突时，按"已开通"处理并核对绑定的智能体。名字只接受小伙伴名与孩子的称呼，不存其他个人信息。
+**规则**
+- 灵矽预注册对已存在的设备返回冲突时，按"已开通"处理并核对绑定的智能体。
+- 名字只接受小伙伴名与孩子的称呼，不存其他个人信息。
+- `SetNames` 在 `fresh` 时进入 `named`；`Handoff` 在 `named` 时进入 `ready`，已是 `ready` 直接返回。名字写入记忆焦点放在 `Handoff` 里，因为记忆容器属于风格智能体。
+- `EnrollVoice` 只在 `VoiceConsent` 为真时调用 linxapi 登记，失败不改变 `Stage`；`Profile` 只存 `SpeakerID`，不存音频与声纹特征。
 
 **依赖** store、linxapi、id。
 
@@ -572,8 +584,8 @@ func (s *Share) Publish(ctx context.Context, from id.DeviceID, description strin
 
 | 表 | 关键字段 |
 | --- | --- |
-| `device` | `device_id`（MAC） `skin` `style_id` `agent_id` `doll_name` `kid_name` `stage` `guardian_id` `created_at` |
-| `style` | `style_id` `skin` `agent_id` |
+| `device` | `device_id`（MAC） `skin` `style_id` `agent_id` `doll_name` `kid_name` `stage` `guardian_id` `voice_consent` `speaker_id` `created_at` |
+| `style` | `style_id` `skin` `agent_id`（含 `welcome` 引导智能体） |
 | `guardian` | `guardian_id` `display_name` |
 | `friendship` | `id` `a` `b` `status` `confirmed_by` `created_at` |
 | `channel_group` | `channel_id` `name` `owner` `code` `expires_at` |
@@ -610,7 +622,7 @@ type Client interface {
     SessionMessages(ctx context.Context, agentID, sessionID string) ([]Message, error)
 }
 ```
-声纹相关方法服务于可选的声纹认主，黑客松版不调用。
+`CreateSpeaker`、`EnrollVoiceprint`、`RecentVoiceSamples` 服务于引导期的声音登记（S12）；`BindSpeakers`、`SetOwnerOnly` 服务于可选的声纹认主，黑客松版不调用。引导智能体被所有新设备共用，`RecentVoiceSamples` 必须能确认样本属于当前设备，否则不登记。
 
 **数据结构**
 ```go
