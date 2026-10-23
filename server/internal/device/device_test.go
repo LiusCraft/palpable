@@ -69,6 +69,9 @@ func TestOnboardingNamingAndHandoff(t *testing.T) {
 	if err := devs.SetNames(ctx, mac, "", "朵朵"); !errors.Is(err, ErrBadName) {
 		t.Fatalf("empty name: %v", err)
 	}
+	if err := devs.SetNames(ctx, mac, "\xd0\xa1\xd0", "朵朵"); !errors.Is(err, ErrBadName) {
+		t.Fatalf("invalid utf-8 name: %v", err)
+	}
 	if err := devs.SetNames(ctx, mac, "小龙", "朵朵"); err != nil {
 		t.Fatal(err)
 	}

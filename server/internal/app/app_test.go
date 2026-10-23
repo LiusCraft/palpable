@@ -247,6 +247,47 @@ func TestWorldOnlyInDemoMode(t *testing.T) {
 	}
 }
 
+func TestDemoToolJoinsParkOnlyInsideIt(t *testing.T) {
+	a, err := newApp(context.Background(), deps{store: store.NewMemory(), demo: config.Demo{World: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	ws := connect(t, srv, mac)
+	call := func() string {
+		resp, err := http.Post(srv.URL+"/world/tool", "application/json", strings.NewReader(`{"device":"`+string(mac)+`","tool":"self.zone.join"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Text    string `json:"text"`
+			IsError bool   `json:"is_error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return fmt.Sprint(out.IsError, " ", out.Text)
+	}
+	if got := call(); !strings.HasPrefix(got, "true") {
+		t.Fatalf("outside the park must be refused: %s", got)
+	}
+	// 走进公园中心，越过 20 米滞回。
+	_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"location","lat":31.2270,"lng":121.4730}`))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := a.zones.Current(mac); ok || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := call(); !strings.HasPrefix(got, "false") {
+		t.Fatalf("inside the park join should work: %s", got)
+	}
+	if fg, ok := a.chans.ForegroundOf(id.Device(mac)); !ok || fg != "zone:park" {
+		t.Fatalf("foreground = %v %v", fg, ok)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mustApp(t, nil).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))

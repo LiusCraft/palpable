@@ -18,7 +18,8 @@ export default function App() {
   useEffect(connectWorld, [])
 
   const device = devices.find((d) => d.mac === (viewing ?? active)) ?? devices[0]
-  const step = scene === 'unbox' ? 0 : scene === 'desk' ? 1 : 2
+  const parkStep = useParkStep(device)
+  const step = scene === 'unbox' ? 0 : scene === 'desk' ? 1 : parkStep
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-16 pt-5 sm:px-6">
@@ -34,6 +35,15 @@ export default function App() {
       </Card>
     </div>
   )
+}
+
+// 公园里的进度：有好友后到第 4 步，好友也在同一频道时到第 5 步。
+function useParkStep(device?: VirtualDevice): number {
+  const fallback = useDevices((s) => s.devices[0])
+  const s = useStore((device ?? fallback).store)
+  if (Object.keys(s.present).length > 0) return 4
+  if (Object.values(s.friends).some((f) => f.status === 'confirmed')) return 3
+  return 2
 }
 
 function UnboxStage({ device, onDone }: { device: VirtualDevice; onDone: () => void }) {

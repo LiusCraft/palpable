@@ -113,6 +113,8 @@ func (w *World) Publish(e Event) // 由 app 调用；慢观察者丢事件，不
 
 **规则** 它会暴露所有设备的位置，**只在演示模式注册路由**（`demo.world: true`），默认启动不开启，访问 `/world` 返回 404。
 
+**演示遥控** `POST /world/tool {device, tool, arguments}`：代替孩子对小伙伴说出指令（如"加入"），执行与 AI 调用相同的业务工具（`bridge/mcp.Proxy.Call`），规则仍由领域模块裁决；只在演示模式注册、只接受在线设备与本机前端来源。用于灵矽不可用时让演示继续，不是设备协议。
+
 **依赖** id。
 
 ---
