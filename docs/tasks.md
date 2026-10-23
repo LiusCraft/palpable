@@ -27,7 +27,7 @@ M2 + M3 即 AGENTS.md 规定的演示主线。W7（文案）不阻塞主线，�
 | S3 | `relation`：状态机、`proximity` 防抖、`AreFriends` 缓存、`FilterFriends`；协议新增 `friend.state` | S1 | 双方靠近 1.5 秒生成 pending；确认后 `AreFriends` 为真；解除立即为假并发事件 | ✅ |
 | S4 | `channel` + `zone`：区域与群、4 位码、前台频道、滞回；成员用 `ParticipantID`；协议新增 `channel.state` | S1 | 入区发 `Entered`，`JoinCurrent` 后进频道；码过期失效；错码限流；`presence` 里没有非好友 | ✅ |
 | S5 | **`voice`：上行路由、发言权、下行转发**；经 `Sink` 收发；协议 `sound` 增加 `busy` | S2、S3、S4 | 见下方"语音验收" | ✅ |
-| S6 | `linxapi` + `device`：引导智能体与风格目录、`EnsureAll`；新设备自动绑定引导智能体；`Handoff` 按 `skin` 交棒到风格智能体并写记忆焦点；换皮套切换智能体；`stage` 为 fresh / named / ready | S1、S2 | 新 MAC 上线后自动绑定引导智能体并能对话；同一 MAC 重复上线不重复开通；`Handoff` 后设备绑定对应风格智能体，重复调用无副作用；`stage=named` 上线时重试交棒而不重新起名；换 `skin` 后切换到新风格；开通失败时设备收到 `error` 且仍可进频道 | 🚧 代码完成；真实环境下"能对话"依赖 OTA 激活，见[待验证](linx-integration.md#待验证) |
+| S6 | `linxapi` + `device`：引导智能体与风格目录、`EnsureAll`；新设备自动绑定引导智能体；`Handoff` 按 `skin` 交棒到风格智能体并写记忆焦点；换皮套切换智能体；`stage` 为 fresh / named / ready | S1、S2 | 新 MAC 上线后自动绑定引导智能体并能对话；同一 MAC 重复上线不重复开通；`Handoff` 后设备绑定对应风格智能体，重复调用无副作用；`stage=named` 上线时重试交棒而不重新起名；换 `skin` 后切换到新风格；开通失败时设备收到 `error` 且仍可进频道 | ✅ |
 | S7 | `bridge/mcp` 代理核心 + `self.profile.set_names`、`self.zone.join`；协议新增 `mcp`；`app` 处理 `Named` 事件：等 AI 说完 → `Handoff` → 重连会话 → 新智能体问候 | S2、S6 | 假灵矽发 `tools/list` 得到合并后的列表（含设备分页）；`tools/call` 按名字路由；说出名字后档案 `stage=named`，AI 说完后自动交棒、会话换成风格智能体并用孩子起的名字问候；交棒失败时下次上线重试 | ✅ |
 | S8 | 群聊与好友业务工具：`self.group.*`、`self.friends.*` | S4、S7 | "创建群聊"拿到 4 位码并播报；"加入群聊 XXXX"进群；"下一个群"切换 | ✅ |
 | S9 | `history` + `share` + `self.share.publish` | S3、S4、S7 | 今日遇到的小朋友、分享可查；分享后好友与本人都听到描述，非好友听不到 | ⬜ |
