@@ -20,7 +20,8 @@ type Config struct {
 // Linx 是灵矽接入配置；WSURL 为空表示不启用 AI 对话。
 type Linx struct {
 	WSURL          string `yaml:"ws_url"`          // 例如 wss://xrobo-io.qiniuapi.com/v1/ws/
-	Token          string `yaml:"token"`           // Bearer 令牌
+	Token          string `yaml:"token"`           // Bearer 令牌，WebSocket 与 REST 共用
+	APIBase        string `yaml:"api_base"`        // REST 地址，默认 https://xrobo.qiniu.com
 	VoiceprintBase string `yaml:"voiceprint_base"` // 声纹服务地址（演示环境）
 }
 

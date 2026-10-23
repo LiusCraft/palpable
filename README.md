@@ -95,7 +95,8 @@ AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端
 | --- | --- |
 | `addr` | 监听地址，默认 `:8080` |
 | `linx.ws_url` | 灵矽 WebSocket 地址，例如 `wss://xrobo-io.qiniuapi.com/v1/ws/`；为空则不启用 AI 对话 |
-| `linx.token` | Bearer 令牌 |
+| `linx.token` | Bearer 令牌，WebSocket 与 REST 共用 |
+| `linx.api_base` | 灵矽 REST 地址，默认 `https://xrobo.qiniu.com` |
 | `linx.voiceprint_base` | 声纹服务地址（演示环境） |
 
 注意：设备以自己的 MAC 作为 `Device-Id` 连灵矽（Web 模拟器首次打开时生成并存在浏览器里，`?device=<mac>` 可指定）。自动预注册（S6）落地前，需先在灵矽侧把该 MAC 预注册并关联智能体，否则握手会被拒绝。
