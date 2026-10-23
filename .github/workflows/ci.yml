@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,6 +17,8 @@ jobs:
   check:
     name: Build and test
     runs-on: ubuntu-latest
+    outputs:
+      coverage: ${{ steps.coverage.outputs.total }}
 
     steps:
       - name: Checkout
@@ -45,3 +48,67 @@ jobs:
 
       - name: Run project checks
         run: make check
+
+      # make check 只断言通过；这里单独留一份覆盖率报告
+      - name: Test with coverage
+        working-directory: server
+        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Read total coverage
+        id: coverage
+        working-directory: server
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub(/%$/, "", $NF); print $NF}')
+          test -n "$total"
+          echo "total=${total}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: server/coverage.out
+          if-no-files-found: error
+
+  # 只在 main 上发布徽章（手动触发也必须是 main）；PR 不写仓库
+  badge:
+    name: Update coverage badge
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build badge
+        env:
+          COVERAGE: ${{ needs.check.outputs.coverage }}
+        run: bash .github/scripts/coverage-badge.sh "$COVERAGE" > "$RUNNER_TEMP/coverage.svg"
+
+      # README 引用 badges 分支上的 SVG，main 保持干净；GITHUB_TOKEN 推送到非 main 分支不会再触发工作流
+      - name: Push badge to badges branch
+        run: |
+          set -euo pipefail
+          worktree="$RUNNER_TEMP/badges"
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git fetch --depth=1 origin badges
+            git worktree add "$worktree" FETCH_HEAD
+          else
+            git worktree add --detach "$worktree"
+            git -C "$worktree" checkout --orphan badges
+            git -C "$worktree" rm -rf . >/dev/null
+          fi
+
+          cp "$RUNNER_TEMP/coverage.svg" "$worktree/coverage.svg"
+          git -C "$worktree" add coverage.svg
+          if git -C "$worktree" diff --cached --quiet; then
+            echo "覆盖率未变化，跳过提交"
+            exit 0
+          fi
+
+          git -C "$worktree" -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore: 更新测试覆盖率徽章"
+          git -C "$worktree" push origin HEAD:badges

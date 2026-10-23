@@ -6,6 +6,7 @@
 ![go](https://img.shields.io/badge/Go-1.26-00ADD8)
 ![react](https://img.shields.io/badge/React-19-61DAFB)
 ![status](https://img.shields.io/badge/status-hackathon%20v0.1-orange)
+[![coverage](https://raw.githubusercontent.com/liuscraft/palpable/badges/coverage.svg)](https://github.com/liuscraft/palpable/actions/workflows/ci.yml)
 
 **可感（Palpable）是一台面向儿童的 AI 语音陪伴对讲机：** 以可更换的玩偶皮套为外观，没有复杂按键、没有需要盯着看的屏幕，孩子只需要**贴近、唤醒、说话**，就能和 AI 小伙伴聊天，也能和朋友用声音连在一起。
 
@@ -19,6 +20,7 @@
 - [功能](#功能)
 - [使用流程](#使用流程)
 - [快速开始](#快速开始)
+- [测试与覆盖率](#测试与覆盖率)
 - [配置](#配置)
 - [架构](#架构)
 - [项目结构](#项目结构)
@@ -84,6 +86,22 @@ make check
 ```
 
 Windows 没有 `make` 时，请在 `web`、`server` 目录分别执行 Makefile 中对应的命令。
+
+## 测试与覆盖率
+
+CI 在每次 PR 上运行单元测试；推送到 `main` 后，会额外把最新的后端覆盖率写入 [`badges`](https://github.com/liuscraft/palpable/tree/badges) 分支的 `coverage.svg`，README 顶部的徽章即取自该文件。PR 的覆盖率报告可从 Actions 的 `go-coverage` artifact 下载。
+
+本地测量并查看逐文件报告：
+
+```bash
+make cover
+```
+
+```bash
+cd server && go tool cover -html=coverage.out
+```
+
+覆盖率目前只统计 `server/`（Go）；`web/` 还没有单元测试。
 
 ## 配置
 

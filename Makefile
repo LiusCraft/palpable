@@ -1,4 +1,4 @@
-.PHONY: gen build lint test vet check dev-server dev-web
+.PHONY: gen build lint test vet cover check dev-server dev-web
 
 # 由 protocol/palpable.schema.json 生成前端协议类型
 gen:
@@ -16,6 +16,11 @@ test:
 
 vet:
 	cd server && go vet ./...
+
+# 报告写入 server/coverage.out（已被 .gitignore 忽略），末行即总覆盖率
+cover:
+	cd server && go test -covermode=atomic -coverprofile=coverage.out ./...
+	cd server && go tool cover -func=coverage.out | tail -1
 
 # 每次改动后的完整检查
 check: gen lint vet test build
