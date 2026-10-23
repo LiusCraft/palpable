@@ -67,6 +67,7 @@ type App struct {
 	gw      *gateway.Gateway
 
 	speaking sync.Map // id.DeviceID → bool：AI 是否正在说话，交棒前等它说完
+	enrolled sync.Map // id.DeviceID → chan struct{}：声纹登记尝试结束时关闭
 }
 
 var _ gateway.Handler = (*App)(nil)
@@ -276,7 +277,7 @@ func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
 // persona 把档案映射成 AI 会话参数；声音登记只在引导期且监护人同意时进行。
 func persona(p device.Profile) linx.Persona {
 	return linx.Persona{AgentID: p.AgentID, DollName: p.DollName, KidName: p.KidName,
-		VoiceStep: p.Stage == device.StageFresh && p.VoiceConsent}
+		VoiceStep: device.VoiceStep(p.Stage == device.StageFresh && p.VoiceConsent)}
 }
 
 // ensureCatalog 确保引导智能体与风格智能体在灵矽存在；失败时稍后重试，期间新设备开通会失败。
@@ -580,6 +581,13 @@ func (a *App) deviceEvents(ctx context.Context) {
 			return
 		case e := <-a.devices.Subscribe():
 			go a.handoff(e)
+		case d := <-a.devices.EnrollAttempts():
+			ch, _ := a.enrolled.LoadOrStore(d, make(chan struct{}))
+			select {
+			case <-ch.(chan struct{}):
+			default:
+				close(ch.(chan struct{}))
+			}
 		}
 	}
 }
@@ -592,6 +600,7 @@ func (a *App) handoff(e device.Named) {
 		return
 	}
 	ctx := sess.Context()
+	a.waitEnroll(ctx, e.Device)
 	a.waitAISilent(ctx, e.Device)
 	a.publish(world.Event{Kind: "device", Device: e.Device, Name: e.DollName})
 	p, err := a.devices.Handoff(ctx, e.Device)
@@ -698,4 +707,23 @@ func (a *App) demoTool(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"text": res.Text, "is_error": res.IsError})
+}
+
+// enrollWait 是起名后还要做声音登记时，交棒前最多等多久：孩子跟读加上 AI 调工具的时间。
+var enrollWait = 45 * time.Second
+
+// waitEnroll 在需要声音登记时，等登记尝试结束（成败都算）或超时，再交棒。
+func (a *App) waitEnroll(ctx context.Context, d id.DeviceID) {
+	p, err := a.devices.Profile(ctx, d)
+	if err != nil || !p.VoiceConsent || p.SpeakerID != "" {
+		return
+	}
+	ch, _ := a.enrolled.LoadOrStore(d, make(chan struct{}))
+	defer a.enrolled.Delete(d)
+	select {
+	case <-ch.(chan struct{}):
+	case <-time.After(enrollWait):
+		slog.Info("voice enrollment not attempted, handing off anyway", "device_id", d)
+	case <-ctx.Done():
+	}
 }

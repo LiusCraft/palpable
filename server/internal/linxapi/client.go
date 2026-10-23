@@ -47,6 +47,8 @@ func (e *APIError) Error() string {
 type Client interface {
 	CreateAgent(ctx context.Context, a AgentSpec) (agentID string, err error)
 	FindAgentByName(ctx context.Context, name string) (agentID string, found bool, err error)
+	// UpdateAgent 覆盖智能体的名称、提示词、音色与记忆模型；空字段保留原值。
+	UpdateAgent(ctx context.Context, agentID string, a AgentSpec) error
 	PreregisterDevice(ctx context.Context, agentID, mac string) error
 	// ActivateDevice 以设备身份访问 OTA，让预注册的 MAC 完成绑定；之前灵矽会话会回"请去绑定智能体"。
 	ActivateDevice(ctx context.Context, mac string) error
@@ -67,7 +69,13 @@ type Client interface {
 type AgentSpec struct {
 	Name, AssistantName, SystemPrompt, MemoryModel string
 	VoiceID                                        string // ttsVoiceId；空则用平台默认
+	ChatHistory                                    int    // chatHistoryConf：0 不改，1 只存文字，2 文字与音频
 }
+
+const (
+	ChatHistoryText  = 1
+	ChatHistoryAudio = 2
+)
 
 const (
 	MemoryLongTerm = "Memory_long_term_memory"
@@ -82,6 +90,7 @@ type VoiceSample struct {
 
 type Session struct {
 	ID        string
+	MAC       string // 会话所属设备；平台没给时为空
 	CreatedAt time.Time
 	ChatCount int
 }
@@ -210,6 +219,19 @@ func (c *HTTPClient) CreateAgent(ctx context.Context, a AgentSpec) (string, erro
 		return "", err
 	}
 	return id, nil
+}
+
+func (c *HTTPClient) UpdateAgent(ctx context.Context, agentID string, a AgentSpec) error {
+	body := map[string]any{}
+	for k, v := range map[string]string{"agentName": a.Name, "assistantName": a.AssistantName, "systemPrompt": a.SystemPrompt, "memModelId": a.MemoryModel, "ttsVoiceId": a.VoiceID} {
+		if v != "" {
+			body[k] = v
+		}
+	}
+	if a.ChatHistory > 0 {
+		body["chatHistoryConf"] = a.ChatHistory
+	}
+	return c.do(ctx, http.MethodPut, "/xiaozhi/agent/"+url.PathEscape(agentID), body, nil)
 }
 
 // FindAgentByName 遍历智能体列表按名字精确匹配；平台的搜索只支持 MAC 与 ID。
@@ -387,6 +409,7 @@ func (c *HTTPClient) SetOwnerOnly(ctx context.Context, agentID string, on bool) 
 func (c *HTTPClient) RecentVoiceSamples(ctx context.Context, agentID string) ([]VoiceSample, error) {
 	var res struct {
 		Records []struct {
+			ChatType   int    `json:"chat_type"`
 			AudioURL   string `json:"audio_url"`
 			MACAddress string `json:"mac_address"`
 			MAC        string `json:"mac"`
@@ -399,7 +422,8 @@ func (c *HTTPClient) RecentVoiceSamples(ctx context.Context, agentID string) ([]
 	}
 	var out []VoiceSample
 	for _, r := range res.Records {
-		if r.AudioURL == "" {
+		// 实测记录里也有小伙伴自己的 TTS（chat_type=2），只有孩子说的话（1）能用来登记声纹。
+		if r.AudioURL == "" || r.ChatType != 1 {
 			continue
 		}
 		mac := strings.ToLower(firstNonEmpty(r.MACAddress, r.MAC, r.DeviceID))
@@ -411,9 +435,10 @@ func (c *HTTPClient) RecentVoiceSamples(ctx context.Context, agentID string) ([]
 func (c *HTTPClient) Sessions(ctx context.Context, agentID string, page, limit int) ([]Session, error) {
 	var res struct {
 		List []struct {
-			SessionID string `json:"sessionId"`
-			CreatedAt string `json:"createdAt"`
-			ChatCount int    `json:"chatCount"`
+			SessionID  string `json:"sessionId"`
+			MACAddress string `json:"macAddress"`
+			CreatedAt  string `json:"createdAt"`
+			ChatCount  int    `json:"chatCount"`
 		} `json:"list"`
 	}
 	q := url.Values{"page": {strconv.Itoa(page)}, "limit": {strconv.Itoa(limit)}}
@@ -422,7 +447,7 @@ func (c *HTTPClient) Sessions(ctx context.Context, agentID string, page, limit i
 	}
 	out := make([]Session, 0, len(res.List))
 	for _, s := range res.List {
-		out = append(out, Session{ID: s.SessionID, CreatedAt: parseTime(s.CreatedAt), ChatCount: s.ChatCount})
+		out = append(out, Session{ID: s.SessionID, MAC: strings.ToLower(s.MACAddress), CreatedAt: parseTime(s.CreatedAt), ChatCount: s.ChatCount})
 	}
 	return out, nil
 }

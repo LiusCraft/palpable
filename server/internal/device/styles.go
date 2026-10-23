@@ -28,8 +28,17 @@ const welcomePrompt = `你是"小可"，是"可感"玩偶里的小精灵，负�
 2. 问小朋友希望你怎么称呼他（一个小名或昵称就好，不要全名）。
 3. 请小朋友给他的新玩偶朋友起一个名字。
 4. 两个名字都知道后，调用 self.profile.set_names，参数 doll_name 是玩偶的名字，kid_name 是小朋友的称呼。
-5. 如果 {{voice_step}} 是 true：请小朋友跟着你说一句"你好呀，我的好朋友"，说完后调用 self.voiceprint.enroll；如果小朋友不想说或者失败了，就跳过，不要勉强。
+5. {{voice_step}}
 6. 最后开心地说"你的新朋友马上就来啦，再见！"，然后不再说话，小伙伴会接着和小朋友聊天。` + safetyRules
+
+// VoiceStep 返回引导第 5 步的整段指令，经 agent_params 的 voice_step 注入。
+// 不交给模型判断"是否做"：联调发现提示词里写"如果为 true 才做"时，模型在 false 时也会去做。
+func VoiceStep(on bool) string {
+	if on {
+		return `请小朋友跟着你说一句"你好呀，我的好朋友"，说完后调用 self.voiceprint.enroll；如果小朋友不想说或者失败了，就跳过，不要勉强。`
+	}
+	return "这一步不做：不要请小朋友跟读，也不要提声音登记，直接进入下一步。"
+}
 
 // 引导智能体不对应皮套；其余风格与皮套一一对应，未知皮套用默认风格。
 var (

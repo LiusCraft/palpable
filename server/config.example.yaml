@@ -6,7 +6,7 @@ db_path: palpable.db  # SQLite 文件，不入库
 demo:
   guardian: demo-parent
   guardian_name: 朵朵妈妈
-  voice_consent: false
+  voice_consent: true    # 引导期做声音登记；false 则跳过
   parent_token: palpable-demo   # 家长端（Web 手机窗口）用的令牌
   world: true                   # 开放 /world 演示地图（会暴露所有设备位置，只在演示时打开）
 

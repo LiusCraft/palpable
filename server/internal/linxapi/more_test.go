@@ -15,6 +15,7 @@ func TestRemainingEndpoints(t *testing.T) {
 		"POST /v1/speakers/spk1/voiceprint":                        `{"code":0,"data":{"voiceprint_id":"vp"}}`,
 		"PUT /v1/agents/a1/speaker-config":                         `{"code":0,"data":{}}`,
 		"PUT /xiaozhi/agent/a1":                                    `{"code":0,"data":null}`,
+		"PUT /xiaozhi/agent/a2":                                    `{"code":0,"data":null}`,
 		"POST /v1/memories":                                        `{"code":0,"data":{"id":"mem_new"}}`,
 	}, calls)
 	ctx := context.Background()
@@ -40,6 +41,15 @@ func TestRemainingEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-calls
+	if err := c.UpdateAgent(ctx, "a2", AgentSpec{SystemPrompt: "新提示词", ChatHistory: ChatHistoryAudio}); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-calls; got.body["systemPrompt"] != "新提示词" || got.body["agentName"] != nil || got.body["chatHistoryConf"] != float64(2) {
+		t.Fatalf("update body = %v", got.body)
+	}
+	if err := NewFake().UpdateAgent(ctx, "missing", AgentSpec{}); err == nil {
+		t.Fatal("fake update unknown agent")
+	}
 	if m, err := c.EnableMemory(ctx, "a1"); err != nil || m != "mem_new" {
 		t.Fatalf("EnableMemory new = %q %v", m, err)
 	}
