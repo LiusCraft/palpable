@@ -606,10 +606,10 @@ func (h *History) RecordShared(ctx context.Context, d id.DeviceID, s SharedScene
 ```go
 type Announcer interface { Say(ctx context.Context, d id.DeviceID, text string) error } // 端口
 
-func (s *Share) Publish(ctx context.Context, from id.DeviceID, description string) error
+func (s *Share) Publish(ctx context.Context, from id.DeviceID, description string) (heard int, err error) // 不在频道返回 ErrNotInChannel
 ```
 
-**规则** AI 用设备工具 `self.camera.take_photo` 得到描述 → 调 `self.share.publish` → 取发送者前台频道成员并经 `relation.FilterFriends` → 对每台设备（含发送者）`Say("<小伙伴名>看到：…")` → `history.Record`。
+**规则** AI 用设备工具 `self.camera.take_photo` 得到描述 → 调 `self.share.publish` → 取发送者前台频道成员并经 `relation.FilterFriends` → 对每台设备（含发送者）`Say("<小伙伴名>看到：…")` → 每台设备各记一笔 `history.RecordShared`，各自的家长都能在今日回顾里看到。描述超过 200 字截断；不在频道时不分享。
 
 **依赖** channel、relation、device、history、id；端口 `Announcer`（bridge/linx）。
 

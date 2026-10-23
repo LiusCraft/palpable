@@ -30,7 +30,7 @@ M2 + M3 即 AGENTS.md 规定的演示主线。W7（文案）不阻塞主线，�
 | S6 | `linxapi` + `device`：引导智能体与风格目录、`EnsureAll`；新设备自动绑定引导智能体；`Handoff` 按 `skin` 交棒到风格智能体并写记忆焦点；换皮套切换智能体；`stage` 为 fresh / named / ready | S1、S2 | 新 MAC 上线后自动绑定引导智能体并能对话；同一 MAC 重复上线不重复开通；`Handoff` 后设备绑定对应风格智能体，重复调用无副作用；`stage=named` 上线时重试交棒而不重新起名；换 `skin` 后切换到新风格；开通失败时设备收到 `error` 且仍可进频道 | 🚧 代码完成；真实环境下"能对话"依赖 OTA 激活，见[待验证](linx-integration.md#待验证) |
 | S7 | `bridge/mcp` 代理核心 + `self.profile.set_names`、`self.zone.join`；协议新增 `mcp`；`app` 处理 `Named` 事件：等 AI 说完 → `Handoff` → 重连会话 → 新智能体问候 | S2、S6 | 假灵矽发 `tools/list` 得到合并后的列表（含设备分页）；`tools/call` 按名字路由；说出名字后档案 `stage=named`，AI 说完后自动交棒、会话换成风格智能体并用孩子起的名字问候；交棒失败时下次上线重试 | ✅ |
 | S8 | 群聊与好友业务工具：`self.group.*`、`self.friends.*` | S4、S7 | "创建群聊"拿到 4 位码并播报；"加入群聊 XXXX"进群；"下一个群"切换 | ✅ |
-| S9 | `history` + `share` + `self.share.publish` | S3、S4、S7 | 今日遇到的小朋友、分享可查；分享后好友与本人都听到描述，非好友听不到 | ⬜ |
+| S9 | `history` + `share` + `self.share.publish` | S3、S4、S7 | 今日遇到的小朋友、分享可查；分享后好友与本人都听到描述，非好友听不到 | ✅ |
 | S10 | `parentapi` | S3、S9 | 接口有测试；未授权与跨家长访问被拒绝 | ⬜ |
 | S11 | `world`，仅演示模式注册 | S4、S5 | 地图实时看到位置、谁在说话、谁被屏蔽；默认启动时 `/world` 不可访问 | ⬜ |
 | S12 | **引导期声音登记**（可选）：`self.voiceprint.enroll`、`device.EnrollVoice`、`linxapi` 声纹登记；`voice_consent` 与 `speaker_id` 入档案 | S6、S7，且先过[待验证](linx-integration.md#待验证)中的样本来源 | 无监护人同意时调用被拒绝且不影响交棒；有同意时登记成功并记下 `speaker_id`；样本取不到时跳过、起名与交棒照常；日志与库里无音频和声纹特征 | 🚧 代码与测试完成；真实样本来源待联调 |
