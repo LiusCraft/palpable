@@ -36,6 +36,9 @@
 | 聊天记录接口按智能体查会话，消息含文本与音频地址；**无日期过滤、无摘要**；音频约 60 天后清理 | 今日回顾要自己按会话时间筛选，摘要先不做 |
 | 实测：会话列表与消息都带 `macAddress`（文档未写会话带） | 今日回顾按会话的 MAC 先过滤，再拉消息 |
 | 实测：智能体默认 `chatHistoryConf=1` 只存文字，`/v1/agents/{id}/chat-history` 的语音样本为空 | 引导期声音登记（S12）取不到样本，见下方待决定 |
+| 实测：网关把业务工具与设备工具合并后，灵矽正常列出并调用（`self.profile.set_names`、`self.voiceprint.enroll`） | bridge/mcp 方案可行 |
+| 实测：交棒时 `PUT /v1/devices/{mac}/agent/{id}`（不迁移记录）后关闭旧会话、以新 `X-Agent-ID` 重连，新智能体即用孩子起的名字问候 | `Handoff` + `Close` / `Open` |
+| 实测：智能体列表不传分页参数时返回全量，按名字匹配可找回已建的风格智能体；`agent_id` 另存 `style` 表 | `Catalog.EnsureAll` 幂等，并每次同步提示词 |
 | 实测：`/v1/agents/{id}/chat-history` 的样本记录带 `device_id`、`session_id`、`chat_type`；**其中也有小伙伴自己的 TTS（`chat_type=2`）**，孩子的话是 `chat_type=1`（`input_audio`） | `linxapi.RecentVoiceSamples` 只取 `chat_type=1`；`device.EnrollVoice` 只用标着本机 MAC、10 分钟内的样本；实测登记成功 |
 | 实测：提示词写"如果 {{voice_step}} 是 true 才做"，模型在 false 时仍会请孩子跟读 | `voice_step` 改为注入整段指令（做 / 不做），不让模型判断 |
 
@@ -45,10 +48,7 @@
 | --- | --- | --- |
 | 记忆的 `identify_id` 用裸 MAC 还是 `mac_` 前缀（文档示例两种都有） | 记忆焦点写入孩子与小伙伴的名字 | 当前用裸 MAC；联调时看灵矽记忆里是否读得到 |
 | 灵矽是否支持用孩子的声音做音色复刻（TTS 克隆） | "复刻孩子的声音"能否进路线图 | 向灵矽确认；未确认前只做声纹登记，儿童声音复刻另需监护人单独同意 |
-| 切换智能体时关闭聊天记录迁移（`disable_chat_history_migration`）的效果；切换后旧会话是否需要主动断开 | 交棒 `Handoff` | 联调时验证 |
 | 拍照上传流程：端侧 MCP 初始化下发视觉地址与令牌，文档没写明图片如何上传 | share 与设备端拍照工具 | 联调时验证；Web 用 canvas 截图 |
-| 网关合并业务工具后，灵矽能否正常列出并调用（含重名、分页） | bridge/mcp | 联调时验证 |
-| 风格智能体按名字查找：智能体列表接口按游标分页，`search` 只支持按 MAC 或智能体 ID | catalog 的 `EnsureAll` | 遍历列表按名字匹配，或把 `agent_id` 存进 `style` 表避免重复查找 |
 | 预注册对已存在设备的返回（冲突码）与 `failed` 列表的含义 | device 的幂等 | 联调时验证 |
 | 今日回顾的摘要由谁生成 | history 工作量 | 先展示聊天原话与事件 |
 
