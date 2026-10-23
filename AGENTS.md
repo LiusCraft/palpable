@@ -24,9 +24,9 @@ Web 模拟器与未来固件是**同一个协议的两个客户端**。所有业
 ```
 palpable/
 ├── protocol/          设备协议 schema 与文档（单一事实来源）
-├── server/            Go 后端（见 docs/architecture.md）
+├── server/            Go 后端（架构见 docs/architecture.md，模块规格见 docs/modules.md）
 │   ├── cmd/palpabled/ 入口
-│   └── internal/      gateway / bridge / channel / relation / zone / identity / guardian / store
+│   └── internal/      gateway / voice / bridge / channel / relation / zone / device / history / share / parentapi / world / store
 ├── web/               前端
 │   └── src/           device-sim / scenes / map / ui / shared
 ├── firmware/          预留：未来硬件固件，只实现 protocol/ 的设备端

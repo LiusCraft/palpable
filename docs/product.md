@@ -1,7 +1,7 @@
 # 可感 Palpable 产品文档
 
 > 版本：v0.1（黑客松版）　状态：草案
-> 相关文档：[架构与模块](architecture.md)、[设备协议](../protocol/README.md)、[开发规则](../AGENTS.md)
+> 相关文档：[整体架构](architecture.md)、[模块规格](modules.md)、[设备协议](../protocol/README.md)、[开发规则](../AGENTS.md)
 
 ## 1. 产品定位
 
