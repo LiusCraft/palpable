@@ -22,6 +22,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/history"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/linxapi"
+	"github.com/LiusCraft/palpable/server/internal/parentapi"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 	"github.com/LiusCraft/palpable/server/internal/relation"
 	"github.com/LiusCraft/palpable/server/internal/share"
@@ -163,6 +164,11 @@ func (a *App) Close() error { return a.store.Close() }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/ws", a.gw)
+	if a.demo.ParentToken != "" && a.demo.Guardian != "" {
+		online := func(d id.DeviceID) bool { _, ok := a.gw.Session(d); return ok }
+		mux.Handle("/api/", parentapi.New(parentapi.FixedToken(a.demo.ParentToken, id.GuardianID(a.demo.Guardian)),
+			a.devices, a.rel, a.chans, a.history, online))
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

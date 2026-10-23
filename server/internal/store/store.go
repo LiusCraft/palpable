@@ -49,6 +49,7 @@ type DeviceRepo interface {
 	Update(ctx context.Context, dev Device) error // 不存在返回 ErrNotFound；CreatedAt 不变
 	// Delete 在同一事务里删除设备及其好友关系、群成员身份与历史。
 	Delete(ctx context.Context, d id.DeviceID) error
+	ListByGuardian(ctx context.Context, g id.GuardianID) ([]Device, error) // 按建档时间升序
 }
 
 // Style 记录风格到灵矽智能体的映射；引导智能体的 ID 为 "welcome"，Skin 为空。

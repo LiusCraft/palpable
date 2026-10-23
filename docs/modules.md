@@ -82,7 +82,7 @@ func (s *Session) Context() context.Context         // 连接断开即取消
 | `GET /api/kids/{id}/groups` | 所在群聊 | `channel.Current` |
 | `GET /api/kids/{id}/digest?date=today` | 今日回顾 | `history.Today` |
 
-**规则** 演示用固定令牌，将来用微信登录。每个接口都校验"该孩子属于此家长"，不属于时返回 404 而不是 403，避免探测设备是否存在。
+**规则** 演示用固定令牌（`demo.parent_token`，请求头 `Authorization: Bearer <token>`，代表 `demo.guardian`），将来用微信登录；未配置令牌时不注册 `/api`。每个接口都校验"该孩子属于此家长"，不属于时返回 404 而不是 403，避免探测设备是否存在；确认好友请求要求请求的一方属于此家长；已处理的请求再确认返回 409。`digest` 目前只支持 `date=today`。
 
 **依赖** device、relation、channel、history。
 
