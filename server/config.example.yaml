@@ -6,4 +6,5 @@ db_path: palpable.db  # SQLite 文件，不入库
 linx:
   ws_url: wss://xrobo-io.qiniuapi.com/v1/ws/
   token: ""
+  api_base: https://xrobo.qiniu.com   # REST 地址
   voiceprint_base: ""   # 声纹服务地址（演示环境）
