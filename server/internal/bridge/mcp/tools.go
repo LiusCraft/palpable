@@ -53,6 +53,10 @@ type Services struct {
 }
 
 func schema(props string, required ...string) json.RawMessage {
+	// 没有必填参数时也要是空数组：JSON Schema 不接受 "required": null。
+	if required == nil {
+		required = []string{}
+	}
 	req, _ := json.Marshal(required)
 	if props == "" {
 		props = "{}"
