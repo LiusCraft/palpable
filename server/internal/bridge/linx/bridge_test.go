@@ -421,3 +421,30 @@ func TestPlatformErrorIsNotPlayedToChild(t *testing.T) {
 	noRecv(t, dev.audio, "platform error speech")
 	noRecv(t, dev.msgs, "speaker state for platform error")
 }
+
+func TestMCPPassThrough(t *testing.T) {
+	f := newFakeLinx(t)
+	b, _, linx := open(t, f, Persona{})
+	if hello := recv(t, f.hellos); hello["features"].(map[string]any)["mcp"] != true {
+		t.Fatalf("hello must declare mcp: %v", hello["features"])
+	}
+	got := make(chan string, 1)
+	b.OnMCP(func(d id.DeviceID, payload json.RawMessage) { got <- string(d) + " " + string(payload) })
+
+	_ = linx.WriteJSON(map[string]any{"type": "mcp", "session_id": "linx-s1", "payload": map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}})
+	if s := recv(t, got); !strings.HasPrefix(s, string(mac)+" ") || !strings.Contains(s, `"tools/list"`) {
+		t.Fatalf("OnMCP got %s", s)
+	}
+
+	if err := b.SendMCP(mac, json.RawMessage(`{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal([]byte(recv(t, f.texts)), &m)
+	if m["type"] != "mcp" || m["session_id"] != "linx-s1" || m["payload"].(map[string]any)["id"] != float64(2) {
+		t.Fatalf("SendMCP sent %v", m)
+	}
+	if err := b.SendMCP("02:00:00:00:00:99", json.RawMessage(`{}`)); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("unknown device: %v", err)
+	}
+}
