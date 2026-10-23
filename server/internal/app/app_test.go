@@ -225,6 +225,28 @@ func TestParentAPIMountedOnlyWithToken(t *testing.T) {
 	}
 }
 
+func TestWorldOnlyInDemoMode(t *testing.T) {
+	rec := httptest.NewRecorder()
+	mustApp(t, nil).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/world", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/world must be 404 by default: %d", rec.Code)
+	}
+	a, err := newApp(context.Background(), deps{store: store.NewMemory(), demo: config.Demo{World: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/world", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if got := readText(t, ws); !strings.Contains(got, `"kind":"snapshot"`) || !strings.Contains(got, `"公园"`) {
+		t.Fatalf("snapshot = %s", got)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mustApp(t, nil).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
