@@ -123,6 +123,15 @@ export class VirtualDevice {
     this.ws?.close()
   }
 
+  /** 换皮套：皮套由硬件识别，在 hello 里上报；在线时重新上线让服务端按新皮套切换风格。 */
+  setSkin(skin: string): void {
+    this.set({ skin })
+    const ws = this.ws
+    if (!ws) return
+    ws.addEventListener('close', () => this.connect(), { once: true })
+    ws.close()
+  }
+
   dispose(): void {
     this.disconnect()
     this.encoder?.close()
