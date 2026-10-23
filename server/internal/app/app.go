@@ -169,6 +169,9 @@ func (a *App) Handler() http.Handler {
 func Run(ctx context.Context, cfg config.Config) error {
 	a, err := New(ctx, cfg)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil // 启动中途就被要求退出，不算失败
+		}
 		return err
 	}
 	defer a.Close()
