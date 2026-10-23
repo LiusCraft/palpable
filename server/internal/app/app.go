@@ -18,17 +18,26 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 	"github.com/LiusCraft/palpable/server/internal/relation"
 	"github.com/LiusCraft/palpable/server/internal/store"
+	"github.com/LiusCraft/palpable/server/internal/voice"
 	"github.com/LiusCraft/palpable/server/internal/zone"
 )
 
-// ai 是 app 用到的 bridge/linx 能力。voice（S5）落地后，音频与收音改由 voice 调用。
+// ai 是 app 用到的 bridge/linx 能力；音频、收音与打断由 voice 经 voice.AI 调用。
 type ai interface {
+	voice.AI
 	Open(ctx context.Context, dev linx.DeviceLink, p linx.Persona) error
 	Close(d id.DeviceID)
-	Forward(d id.DeviceID, frame []byte)
-	Listen(d id.DeviceID, on bool)
 	Say(ctx context.Context, d id.DeviceID, text string) error
+	OnAIState(fn func(d id.DeviceID, s linx.AIState))
 }
+
+// noAI 在未配置灵矽时顶替 voice.AI：不可用，音频不去 AI。
+type noAI struct{}
+
+func (noAI) Forward(id.DeviceID, []byte) {}
+func (noAI) Interrupt(id.DeviceID)       {}
+func (noAI) Available(id.DeviceID) bool  { return false }
+func (noAI) Listen(id.DeviceID, bool)    {}
 
 type App struct {
 	store store.Store
@@ -36,6 +45,7 @@ type App struct {
 	rel   *relation.Relations
 	chans *channel.Channels
 	zones *zone.Zones
+	voice *voice.Router
 	gw    *gateway.Gateway
 }
 
@@ -77,6 +87,20 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		return nil, err
 	}
 	a := &App{store: d.store, ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park)}
+	var aiPort voice.AI = noAI{}
+	if d.ai != nil {
+		aiPort = d.ai
+	}
+	a.voice = voice.New(chans, rel, aiPort, a, func(dev id.DeviceID) string { return a.dollName(context.Background(), dev) })
+	if d.ai != nil {
+		d.ai.OnAIState(func(dev id.DeviceID, s linx.AIState) {
+			if s == linx.AISpeaking {
+				a.voice.OnAIState(dev, voice.AISpeaking)
+			} else {
+				a.voice.OnAIState(dev, voice.AIIdle)
+			}
+		})
+	}
 	a.gw = gateway.New(a, allowDevOrigin)
 	return a, nil
 }
@@ -86,6 +110,8 @@ func (a *App) Start(ctx context.Context) {
 	go a.relationEvents(ctx)
 	go a.channelEvents(ctx)
 	go a.zoneEvents(ctx)
+	go a.voice.Run(ctx)
+	go a.voiceEvents(ctx)
 	go a.sweepGroups(ctx)
 }
 
@@ -142,13 +168,9 @@ func persona(*gateway.Session) linx.Persona { return linx.Persona{} }
 func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 	switch m := msg.(type) {
 	case *protocol.MicState:
-		if a.ai != nil {
-			a.ai.Listen(s.DeviceID(), m.State == "start")
-		}
+		a.voice.OnMicState(s.DeviceID(), m.State == "start")
 	case *protocol.Wake:
-		if a.ai != nil {
-			a.ai.Listen(s.DeviceID(), true)
-		}
+		a.voice.OnWake(s.DeviceID())
 	case *protocol.Proximity:
 		peers := make([]relation.Peer, 0, len(m.Peers))
 		for _, p := range m.Peers {
@@ -167,12 +189,11 @@ func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 }
 
 func (a *App) OnAudio(s *gateway.Session, frame []byte) {
-	if a.ai != nil {
-		a.ai.Forward(s.DeviceID(), frame)
-	}
+	a.voice.OnMicFrame(s.DeviceID(), frame)
 }
 
 func (a *App) OnDisconnect(s *gateway.Session) {
+	a.voice.OnDisconnect(s.DeviceID())
 	if a.ai != nil {
 		a.ai.Close(s.DeviceID())
 	}
@@ -236,6 +257,9 @@ func (a *App) onRelation(ctx context.Context, e relation.Event) {
 			a.send(d, state)
 		}
 	}
+	if e.Kind == relation.Removed {
+		a.voice.OnFriendRemoved(f.A, f.B)
+	}
 }
 
 func (a *App) sweepGroups(ctx context.Context) {
@@ -280,12 +304,14 @@ func (a *App) onChannel(ctx context.Context, e channel.Event) {
 			a.send(d, a.presence("join", fd, ch)) // 新来的也知道哪些好友已经在
 		}
 	case channel.Left:
+		a.voice.OnLeave(d)
 		state.Event = "left"
 		a.send(d, state, &protocol.Sound{Type: protocol.TypeSound, Name: "left"})
 		for _, f := range a.rel.FilterFriends(ctx, e.Participant, a.chans.Members(ch.ID)) {
 			a.send(id.OwnerDevice(f), a.presence("leave", d, ch))
 		}
 	case channel.Switched:
+		a.voice.OnLeave(d)
 		state.Event = "switched"
 		a.send(d, state, &protocol.Sound{Type: protocol.TypeSound, Name: "switched"})
 	}
@@ -336,3 +362,38 @@ func (a *App) onZone(ctx context.Context, e zone.Event) {
 
 // ready 表示设备已完成起名与交棒；引导期间不打扰孩子问是否加入区域频道。device（S6）落地前视为已就绪。
 func (a *App) ready(context.Context, id.DeviceID) bool { return true }
+
+// Send 与 SendAudio 实现 voice.Sink：参与者现在都是设备，经 gateway 会话下发。
+func (a *App) Send(p id.ParticipantID, m protocol.Message) error {
+	sess, ok := a.gw.Session(id.OwnerDevice(p))
+	if !ok {
+		return nil
+	}
+	return sess.Send(m)
+}
+
+func (a *App) SendAudio(p id.ParticipantID, f []byte) error {
+	sess, ok := a.gw.Session(id.OwnerDevice(p))
+	if !ok {
+		return nil
+	}
+	return sess.SendAudio(f)
+}
+
+func (a *App) voiceEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-a.voice.Subscribe():
+			a.onVoice(e)
+		}
+	}
+}
+
+// onVoice 目前只记录元数据；world（S11）落地后转给地图。
+func (a *App) onVoice(e voice.Event) {
+	if e.Kind == voice.BurstStarted {
+		slog.Debug("burst started", "channel", e.Burst.Channel, "speaker", e.Burst.Speaker, "listeners", len(e.Burst.Listeners))
+	}
+}

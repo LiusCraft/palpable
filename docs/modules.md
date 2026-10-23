@@ -187,6 +187,12 @@ func (w *World) Publish(e WorldEvent) // 由 app 调用
 
 **延迟目标** 服务端内部 < 100ms（不含网络），端到端 < 300ms。每个 `Burst` 记录首帧收到与首帧发出的时间戳。
 
+**实现要点**
+- 一把锁保护全部状态，临界区内不做 I/O；需要发出的消息与打断先收集，解锁后执行。
+- 每个听者一个有序 outbox：`speaker.state` 与音频帧保持先后，音频最多 8 帧、满了丢最旧，控制消息不丢；由唯一写 goroutine 经 `Sink` 发出。
+- 灵矽只在"路由到 AI 且麦克风开着"时收音（`AI.Listen`）。
+- 好友发言时 AI 又开口，同样打断 AI；`speaker.state` 带发言者小伙伴的名字。
+
 **接口**
 ```go
 type Router interface {
@@ -195,8 +201,10 @@ type Router interface {
     OnMicFrame(d id.DeviceID, frame []byte)       // 热路径
     OnAIState(d id.DeviceID, s AIState)           // bridge/linx 回报：idle / speaking
     OnFriendRemoved(a, b id.DeviceID)             // app 转发 relation 事件
-    OnLeave(d id.DeviceID)                        // 断线或离开频道
+    OnLeave(d id.DeviceID)                        // 离开或切换前台频道
+    OnDisconnect(d id.DeviceID)                   // 断线：结束发言并释放下行 goroutine
     RouteOf(d id.DeviceID) Route
+    Run(ctx context.Context)                      // 看门狗：拖尾与断流
     Subscribe() <-chan Event
 }
 
@@ -206,7 +214,7 @@ type Membership interface {
     Members(ch id.ChannelID) []id.ParticipantID
 }
 type Friends interface { AreFriends(ctx context.Context, a, b id.ParticipantID) (bool, error) }
-type AI      interface { Forward(d id.DeviceID, frame []byte); Interrupt(d id.DeviceID); Available(d id.DeviceID) bool }
+type AI      interface { Forward(d id.DeviceID, frame []byte); Interrupt(d id.DeviceID); Available(d id.DeviceID) bool; Listen(d id.DeviceID, on bool) }
 type Sink    interface {
     Send(p id.ParticipantID, m protocol.Message) error
     SendAudio(p id.ParticipantID, f []byte) error
