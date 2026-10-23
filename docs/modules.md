@@ -729,7 +729,7 @@ func OwnerDevice(p ParticipantID) DeviceID // 好友判断与家长控制都以�
 | 模块 | 类别 | 职责 |
 | --- | --- | --- |
 | `shared` | — | 生成的协议类型、WS 客户端、zustand store |
-| `device-sim` | 设备 | 虚拟设备：麦克风与扬声器、设备端 VAD 与 `mic.state`、`wake`、`proximity`、`location`、按 `audio.downlink` 解码、设备端 MCP 服务 |
+| `device-sim` | 设备 | 虚拟设备：麦克风与扬声器、设备端 VAD 与 `mic.state`、`wake`、`proximity`、`location`、按 `audio.downlink` 解码、设备端 MCP 服务（`self.light.set`、`self.haptic.pulse`、`self.camera.take_photo`）。一个页面可开多只（`VirtualDevice`，各自一条连接），物理麦克风同一时刻只交给一只。摄像头与 BLE 由 `environment` 模拟：场景提供"眼前的画面"，靠近强度由地图距离换算 |
 | `plush` | 设备表现 | 玩偶与灯带，响应 `light`、`speaker.state`、`haptic` |
 | `scenes/unbox` | Web 展示 | 开箱 |
 | `scenes/desk` | Web 展示 | 桌面场景、起名引导的画面 |
