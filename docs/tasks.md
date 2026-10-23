@@ -33,7 +33,7 @@ M2 + M3 即 AGENTS.md 规定的演示主线。W7（文案）不阻塞主线，�
 | S9 | `history` + `share` + `self.share.publish` | S3、S4、S7 | 今日遇到的小朋友、分享可查；分享后好友与本人都听到描述，非好友听不到 | ✅ |
 | S10 | `parentapi` | S3、S9 | 接口有测试；未授权与跨家长访问被拒绝 | ✅ |
 | S11 | `world`，仅演示模式注册 | S4、S5 | 地图实时看到位置、谁在说话、谁被屏蔽；默认启动时 `/world` 不可访问 | ✅ |
-| S12 | **引导期声音登记**（可选）：`self.voiceprint.enroll`、`device.EnrollVoice`、`linxapi` 声纹登记；`voice_consent` 与 `speaker_id` 入档案 | S6、S7，且先过[待验证](linx-integration.md#待验证)中的样本来源 | 无监护人同意时调用被拒绝且不影响交棒；有同意时登记成功并记下 `speaker_id`；样本取不到时跳过、起名与交棒照常；日志与库里无音频和声纹特征 | 🚧 代码与测试完成；样本需引导智能体存音频，与"不长期保留原始音频"冲突，[待产品决定](linx-integration.md#待产品决定) |
+| S12 | **引导期声音登记**（可选）：`self.voiceprint.enroll`、`device.EnrollVoice`、`linxapi` 声纹登记；`voice_consent` 与 `speaker_id` 入档案 | S6、S7，且先过[待验证](linx-integration.md#待验证)中的样本来源 | 无监护人同意时调用被拒绝且不影响交棒；有同意时登记成功并记下 `speaker_id`；样本取不到时跳过、起名与交棒照常；日志与库里无音频和声纹特征 | ✅ 引导智能体存音频已获产品允许（见[产品决定](linx-integration.md#产品决定)） |
 
 ### 语音验收（S5）
 

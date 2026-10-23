@@ -30,7 +30,7 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != ":8080" || cfg.Linx.Enabled() {
+	if cfg.Addr != ":8080" || cfg.Linx.Enabled() || !cfg.Demo.VoiceConsent {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 }

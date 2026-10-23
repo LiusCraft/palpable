@@ -164,7 +164,7 @@ func TestHistoryParsing(t *testing.T) {
 	c := server(t, map[string]string{
 		"GET /xiaozhi/agent/a1/sessions":        `{"code":0,"data":{"total":1,"list":[{"sessionId":"s1","macAddress":"02:00:00:00:00:01","createdAt":"2026-10-23 09:00:00","chatCount":2}]}}`,
 		"GET /xiaozhi/agent/a1/chat-history/s1": `{"code":0,"data":[{"createdAt":"2026-10-23 09:00:01","chatType":1,"content":"你好","audioUrl":"u","macAddress":"02:00:00:00:00:01"},{"createdAt":"2026-10-23 09:00:02","chatType":2,"content":"你好呀"}]}`,
-		"GET /v1/agents/a1/chat-history":        `{"code":0,"data":{"records":[{"audio_url":"https://x/a.wav","mac_address":"02:00:00:00:00:01","created_at":"2026-10-23T01:00:00Z"},{"audio_url":""}]}}`,
+		"GET /v1/agents/a1/chat-history":        `{"code":0,"data":{"records":[{"chat_type":1,"audio_url":"https://x/a.wav","device_id":"02:00:00:00:00:01","created_at":"2026-10-23T23:25:34.389+08:00"},{"chat_type":2,"audio_url":"https://x/tts.wav","device_id":"02:00:00:00:00:01"},{"chat_type":1,"audio_url":""}]}}`,
 	}, nil)
 	ctx := context.Background()
 	ss, err := c.Sessions(ctx, "a1", 1, 20)

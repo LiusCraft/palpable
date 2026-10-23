@@ -113,11 +113,12 @@ func (c *Catalog) EnsureAll(ctx context.Context) error {
 }
 
 func (c *Catalog) ensure(ctx context.Context, s Style) (string, error) {
-	mem := linxapi.MemoryLongTerm
+	spec := linxapi.AgentSpec{Name: agentName(s), AssistantName: s.AgentName, SystemPrompt: s.SystemPrompt,
+		MemoryModel: linxapi.MemoryLongTerm, VoiceID: s.VoiceID, ChatHistory: linxapi.ChatHistoryText}
 	if s.ID == onboarding.ID {
-		mem = linxapi.MemoryNone // 引导期的对话不留记忆
+		// 引导期的对话不留记忆；保存音频是为了从孩子跟读的那句话登记声纹（S12），产品已允许。
+		spec.MemoryModel, spec.ChatHistory = linxapi.MemoryNone, linxapi.ChatHistoryAudio
 	}
-	spec := linxapi.AgentSpec{Name: agentName(s), AssistantName: s.AgentName, SystemPrompt: s.SystemPrompt, MemoryModel: mem, VoiceID: s.VoiceID}
 
 	agent := ""
 	if rec, err := c.repo.Get(ctx, s.ID); err == nil {
@@ -167,20 +168,24 @@ func (c *Catalog) ForSkin(skin string) Style {
 // ---- Devices ----
 
 type Devices struct {
-	repo    store.DeviceRepo
-	catalog *Catalog
-	linx    linxapi.Client
-	now     func() time.Time
-	events  chan Named
+	repo     store.DeviceRepo
+	catalog  *Catalog
+	linx     linxapi.Client
+	now      func() time.Time
+	events   chan Named
+	enrolled chan id.DeviceID // 每次声纹登记尝试结束（无论成败）
 
 	mu sync.Mutex // 串行化同一进程里的开通与交棒，避免重复调用灵矽
 }
 
 func New(repo store.DeviceRepo, catalog *Catalog, linx linxapi.Client) *Devices {
-	return &Devices{repo: repo, catalog: catalog, linx: linx, now: time.Now, events: make(chan Named, eventBuffer)}
+	return &Devices{repo: repo, catalog: catalog, linx: linx, now: time.Now, events: make(chan Named, eventBuffer), enrolled: make(chan id.DeviceID, eventBuffer)}
 }
 
 func (d *Devices) Subscribe() <-chan Named { return d.events }
+
+// EnrollAttempts 在每次声纹登记尝试结束时给出设备 ID，app 据此决定何时交棒。
+func (d *Devices) EnrollAttempts() <-chan id.DeviceID { return d.enrolled }
 
 // Ensure 幂等：没有档案时在灵矽预注册并绑定引导智能体；已就绪的设备换了皮套时切换风格智能体。
 func (d *Devices) Ensure(ctx context.Context, info DeviceInfo) (Profile, error) {
@@ -381,6 +386,12 @@ func (d *Devices) EnrollVoice(ctx context.Context, dev id.DeviceID) error {
 	if p.StyleID != onboarding.ID {
 		return ErrNotOnboarding
 	}
+	defer func() {
+		select {
+		case d.enrolled <- dev:
+		default:
+		}
+	}()
 	samples, err := d.linx.RecentVoiceSamples(ctx, p.AgentID)
 	if err != nil {
 		return fmt.Errorf("enroll voice %s: %w", dev, err)

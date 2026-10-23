@@ -422,6 +422,7 @@ type Profile struct {
 - 灵矽预注册对已存在的设备返回冲突时，按"已开通"处理并核对绑定的智能体。
 - 名字只接受小伙伴名与孩子的称呼，不存其他个人信息。
 - `SetNames` 在 `fresh` 时进入 `named`；`Handoff` 在 `named` 时进入 `ready`，已是 `ready` 直接返回。名字写入记忆焦点放在 `Handoff` 里，因为记忆容器属于风格智能体。
+- 有声音登记时，`app` 交棒前等登记尝试结束（`EnrollAttempts`，成败都算，最长 45 秒），否则跟读还没做就被切走。
 - `EnrollVoice` 只在 `VoiceConsent` 为真、且仍在引导期时调用 linxapi 登记，失败不改变 `Stage`；`Profile` 只存 `SpeakerID`，不存音频与声纹特征。样本必须明确标着本机 MAC、且在 10 分钟内，否则返回 `ErrNoSample`。
 - 开通 = 预注册到引导智能体 + 以设备身份访问一次 OTA 完成绑定；OTA 失败只记日志，不阻塞开通（可在灵矽控制台手动绑定）。
 - 名字 1 到 12 个字符；交棒时不迁移引导期聊天记录；记忆焦点写入失败只记日志，名字每次会话也会经 `agent_params` 注入。

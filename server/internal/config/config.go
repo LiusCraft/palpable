@@ -22,7 +22,7 @@ type Config struct {
 type Demo struct {
 	Guardian     string `yaml:"guardian"`      // 新设备自动绑定到这个家长 ID；空则不绑定
 	GuardianName string `yaml:"guardian_name"` // 家长显示名
-	VoiceConsent bool   `yaml:"voice_consent"` // 预置监护人对声纹登记的同意
+	VoiceConsent bool   `yaml:"voice_consent"` // 预置声纹登记的同意，默认开启；设为 false 则引导期不做声音登记
 	ParentToken  string `yaml:"parent_token"`  // 家长端令牌，代表 Guardian；空则不开放 /api
 	World        bool   `yaml:"world"`         // 开放 /world 演示地图；会暴露所有设备位置，默认关闭
 }
@@ -41,7 +41,7 @@ func (l Linx) Enabled() bool { return l.WSURL != "" }
 // Load 读取并解析 path。文件不存在时返回默认配置，便于本地不接灵矽直接跑；
 // 其他错误（含未知字段）一律上抛，避免拼错的键被静默忽略。
 func Load(path string) (Config, error) {
-	cfg := Config{Addr: ":8080", DBPath: "palpable.db"}
+	cfg := Config{Addr: ":8080", DBPath: "palpable.db", Demo: Demo{VoiceConsent: true}}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, nil

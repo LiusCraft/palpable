@@ -41,10 +41,10 @@ func TestRemainingEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-calls
-	if err := c.UpdateAgent(ctx, "a2", AgentSpec{SystemPrompt: "新提示词"}); err != nil {
+	if err := c.UpdateAgent(ctx, "a2", AgentSpec{SystemPrompt: "新提示词", ChatHistory: ChatHistoryAudio}); err != nil {
 		t.Fatal(err)
 	}
-	if got := <-calls; got.body["systemPrompt"] != "新提示词" || got.body["agentName"] != nil {
+	if got := <-calls; got.body["systemPrompt"] != "新提示词" || got.body["agentName"] != nil || got.body["chatHistoryConf"] != float64(2) {
 		t.Fatalf("update body = %v", got.body)
 	}
 	if err := NewFake().UpdateAgent(ctx, "missing", AgentSpec{}); err == nil {

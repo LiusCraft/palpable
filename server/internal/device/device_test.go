@@ -43,8 +43,11 @@ func TestEnsureAllIsIdempotentAndPrompted(t *testing.T) {
 	if err := NewCatalog(s.Styles(), fake).EnsureAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if fake.Agents[welcome].SystemPrompt != welcomePrompt {
-		t.Fatal("prompt not synced to existing agent")
+	if a := fake.Agents[welcome]; a.SystemPrompt != welcomePrompt || a.ChatHistory != linxapi.ChatHistoryAudio || a.MemoryModel != linxapi.MemoryNone {
+		t.Fatalf("onboarding agent not synced: %+v", a)
+	}
+	if a := fake.Agents[cat.ForSkin("dragon").AgentID]; a.ChatHistory != linxapi.ChatHistoryText {
+		t.Fatalf("style agents keep text only: %+v", a)
 	}
 	if cat.ForSkin("nope").ID != defaultSkin || cat.ForSkin("dragon").AgentID == "" || cat.Onboarding().AgentID == "" {
 		t.Fatal("catalog lookups")

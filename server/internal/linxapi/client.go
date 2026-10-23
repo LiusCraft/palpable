@@ -69,7 +69,13 @@ type Client interface {
 type AgentSpec struct {
 	Name, AssistantName, SystemPrompt, MemoryModel string
 	VoiceID                                        string // ttsVoiceId；空则用平台默认
+	ChatHistory                                    int    // chatHistoryConf：0 不改，1 只存文字，2 文字与音频
 }
+
+const (
+	ChatHistoryText  = 1
+	ChatHistoryAudio = 2
+)
 
 const (
 	MemoryLongTerm = "Memory_long_term_memory"
@@ -221,6 +227,9 @@ func (c *HTTPClient) UpdateAgent(ctx context.Context, agentID string, a AgentSpe
 		if v != "" {
 			body[k] = v
 		}
+	}
+	if a.ChatHistory > 0 {
+		body["chatHistoryConf"] = a.ChatHistory
 	}
 	return c.do(ctx, http.MethodPut, "/xiaozhi/agent/"+url.PathEscape(agentID), body, nil)
 }
@@ -400,6 +409,7 @@ func (c *HTTPClient) SetOwnerOnly(ctx context.Context, agentID string, on bool) 
 func (c *HTTPClient) RecentVoiceSamples(ctx context.Context, agentID string) ([]VoiceSample, error) {
 	var res struct {
 		Records []struct {
+			ChatType   int    `json:"chat_type"`
 			AudioURL   string `json:"audio_url"`
 			MACAddress string `json:"mac_address"`
 			MAC        string `json:"mac"`
@@ -412,7 +422,8 @@ func (c *HTTPClient) RecentVoiceSamples(ctx context.Context, agentID string) ([]
 	}
 	var out []VoiceSample
 	for _, r := range res.Records {
-		if r.AudioURL == "" {
+		// 实测记录里也有小伙伴自己的 TTS（chat_type=2），只有孩子说的话（1）能用来登记声纹。
+		if r.AudioURL == "" || r.ChatType != 1 {
 			continue
 		}
 		mac := strings.ToLower(firstNonEmpty(r.MACAddress, r.MAC, r.DeviceID))
