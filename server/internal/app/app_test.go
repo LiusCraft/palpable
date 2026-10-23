@@ -32,7 +32,10 @@ func (f *fakeAI) Close(d id.DeviceID) { f.calls <- "close " + string(d) }
 func (f *fakeAI) Forward(d id.DeviceID, frame []byte) {
 	f.calls <- fmt.Sprintf("forward %s %d", d, len(frame))
 }
-func (f *fakeAI) Listen(d id.DeviceID, on bool) { f.calls <- fmt.Sprintf("listen %s %v", d, on) }
+func (f *fakeAI) Listen(d id.DeviceID, on bool)             { f.calls <- fmt.Sprintf("listen %s %v", d, on) }
+func (f *fakeAI) Interrupt(d id.DeviceID)                   { f.calls <- "interrupt " + string(d) }
+func (f *fakeAI) Available(id.DeviceID) bool                { return true }
+func (f *fakeAI) OnAIState(func(id.DeviceID, linx.AIState)) {}
 func (f *fakeAI) Say(_ context.Context, d id.DeviceID, text string) error {
 	f.calls <- fmt.Sprintf("say %s %s", d, text)
 	return nil
@@ -144,6 +147,7 @@ func TestDispatch(t *testing.T) {
 	send(websocket.TextMessage, `{"type":"mic.state","state":"stop"}`)
 	f.want(t, "listen 02:00:00:00:00:01 false")
 	send(websocket.TextMessage, `{"type":"wake","source":"touch"}`)
+	send(websocket.TextMessage, `{"type":"mic.state","state":"start"}`)
 	f.want(t, "listen 02:00:00:00:00:01 true")
 
 	// 位置在公园外：不触发 AI。
