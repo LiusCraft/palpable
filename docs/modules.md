@@ -592,9 +592,9 @@ func (s *Share) Publish(ctx context.Context, from id.DeviceID, description strin
 | `channel_member` | `channel_id` `participant_id` `joined_at`（只存群成员；区域频道成员在内存） |
 | `history_event` | `id` `device_id` `kind` `payload` `at` |
 
-**规则** 声纹与原始音频不入库；记忆本体在灵矽，不重复保存。删除设备时同一事务删除其好友、群成员与历史。
+**规则** 声纹与原始音频不入库；记忆本体在灵矽，不重复保存。删除设备时同一事务删除其好友、群成员与历史。只存取记录、不含业务规则：阶段、好友状态、历史类型以整数存放，含义由所属领域模块定义；好友对由仓储规范为 `A < B`。`NewMemory()` 是假实现，与 SQLite 跑同一套契约测试。
 
-**依赖** 无。
+**依赖** id。
 
 ---
 

@@ -22,7 +22,7 @@ M2 + M3 即 AGENTS.md 规定的演示主线。W7（文案）不阻塞主线，�
 
 | 编号 | 任务 | 依赖 | 验收 | 状态 |
 | --- | --- | --- | --- | --- |
-| S1 | `store`：SQLite、迁移、各表、仓储接口与假实现；`id` 包 | — | 增删改查有测试；业务模块换假实现不改代码 | ⬜ |
+| S1 | `store`：SQLite、迁移、各表、仓储接口与假实现；`id` 包 | — | 增删改查有测试；业务模块换假实现不改代码 | ✅ |
 | S2 | **接入重构**：新建 `app`，`main.go` 只做组装；协议 `hello` 增加 `skin`、`device_id` 限定 MAC；`bridge/linx` 改为 `Open / Close / Forward / Interrupt / Say / OnAIState`，经 `DeviceLink` 收发，删除 `PseudoMAC` 与 `Config.AgentID`，`hello.agent_params` 注入名字，断线重连 | M1 | `app` 按[分发表](modules.md#app)转发消息；假灵矽下 `Say` 不经 LLM 直出语音；灵矽断线后自动重连，设备断开后无 goroutine 泄漏 | ⬜ |
 | S3 | `relation`：状态机、`proximity` 防抖、`AreFriends` 缓存、`FilterFriends`；协议新增 `friend.state` | S1 | 双方靠近 1.5 秒生成 pending；确认后 `AreFriends` 为真；解除立即为假并发事件 | ⬜ |
 | S4 | `channel` + `zone`：区域与群、4 位码、前台频道、滞回；成员用 `ParticipantID`；协议新增 `channel.state` | S1 | 入区发 `Entered`，`JoinCurrent` 后进频道；码过期失效；错码限流；`presence` 里没有非好友 | ⬜ |
