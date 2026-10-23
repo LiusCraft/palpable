@@ -4,7 +4,19 @@
  * 可感设备协议（文本帧）。音频为独立的二进制 Opus 帧，不在此 schema 内。设备↔服务端所有 JSON 消息都必须匹配 oneOf 中的一项。
  */
 export type PalpableMessage =
-  Hello | Wake | MicState | Proximity | Location | HelloAck | Light | Haptic | Sound | SpeakerState | Presence | Error;
+  | Hello
+  | Wake
+  | MicState
+  | Proximity
+  | Location
+  | HelloAck
+  | AudioDownlink
+  | Light
+  | Haptic
+  | Sound
+  | SpeakerState
+  | Presence
+  | Error;
 export type Capability = "mic" | "speaker" | "light" | "haptic" | "proximity" | "location" | "wake";
 export type LightState = "idle" | "listening" | "thinking" | "speaking" | "peer_talking" | "muted";
 
@@ -1033,6 +1045,17 @@ export interface HelloAck {
   type: "hello.ack";
   session_id: string;
   audio_params: AudioParams;
+}
+/**
+ * 下行音频参数。AI 通道就绪后发送，早于任何下行音频帧；设备按它配置 Opus 解码器。
+ */
+export interface AudioDownlink {
+  type: "audio.downlink";
+  sample_rate: 16000 | 24000;
+  /**
+   * 单帧毫秒数
+   */
+  frame_duration: 20 | 40 | 60;
 }
 export interface Light {
   type: "light";

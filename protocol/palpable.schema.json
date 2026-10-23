@@ -10,6 +10,7 @@
     { "$ref": "#/$defs/Proximity" },
     { "$ref": "#/$defs/Location" },
     { "$ref": "#/$defs/HelloAck" },
+    { "$ref": "#/$defs/AudioDownlink" },
     { "$ref": "#/$defs/Light" },
     { "$ref": "#/$defs/Haptic" },
     { "$ref": "#/$defs/Sound" },
@@ -108,6 +109,17 @@
         "type": { "const": "hello.ack" },
         "session_id": { "type": "string", "minLength": 1 },
         "audio_params": { "$ref": "#/$defs/AudioParams" }
+      }
+    },
+    "AudioDownlink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sample_rate", "frame_duration"],
+      "description": "下行音频参数。AI 通道就绪后发送，早于任何下行音频帧；设备按它配置 Opus 解码器。",
+      "properties": {
+        "type": { "const": "audio.downlink" },
+        "sample_rate": { "enum": [16000, 24000] },
+        "frame_duration": { "enum": [20, 40, 60], "description": "单帧毫秒数" }
       }
     },
     "Light": {

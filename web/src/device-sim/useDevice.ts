@@ -62,6 +62,9 @@ export const useDevice = create<DeviceState>((set, get) => ({
         case 'light':
           set({ light: msg.state })
           break
+        case 'audio.downlink':
+          player.configure(msg.sample_rate)
+          break
         case 'speaker.state':
           set({ speaking: msg.state === 'start' })
           if (msg.state === 'stop') player.reset()

@@ -5,7 +5,8 @@
 - 传输：WebSocket，端点 `/ws`。文本帧为 JSON，二进制帧为 Opus 音频（16kHz、单声道、60ms 一帧）。
 - 握手：设备连接后 10 秒内必须发送 `hello`；服务端回 `hello.ack`。同一 `device_id` 同时只允许一条连接。
 - 上行类型：`hello`、`wake`、`mic.state`、`proximity`、`location`。
-- 下行类型：`hello.ack`、`light`、`haptic`、`sound`、`speaker.state`、`presence`、`error`。
+- 下行类型：`hello.ack`、`audio.downlink`、`light`、`haptic`、`sound`、`speaker.state`、`presence`、`error`。
+- 音频参数：上行固定 Opus、16kHz、单声道、60ms；下行以 `audio.downlink` 为准（灵矽的 TTS 可能是 24kHz），该消息在 AI 通道就绪后发送，早于任何下行音频帧。设备必须按它配置解码器，收到前按 16kHz / 60ms 处理。
 - 未知字段、未知类型、超出范围的值一律返回 `error`（`bad_message`），连接保持。
 
 ## 如何保持一致

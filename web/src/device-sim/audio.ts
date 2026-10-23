@@ -1,8 +1,9 @@
 // 设备的麦克风与扬声器：采集 16kHz 单声道、每 60ms 编码为一帧 Opus；播放时反向解码。
 // 与协议约定一致（见 protocol/README.md）。依赖浏览器的 WebCodecs（Chromium 系）。
 
-const SAMPLE_RATE = 16000
+const SAMPLE_RATE = 16000 // 上行（麦克风）固定 16kHz
 const FRAME_SAMPLES = 960 // 60ms
+const DEFAULT_DOWNLINK_RATE = 16000 // 下行默认值，收到 audio.downlink 后以服务端为准
 
 const WORKLET_SRC = `
 class FrameCollector extends AudioWorkletProcessor {
@@ -94,19 +95,28 @@ export class MicCapture {
 export class Player {
   private ctx: AudioContext | null = null
   private decoder: AudioDecoder | null = null
+  private rate = DEFAULT_DOWNLINK_RATE
   private nextTime = 0
   private timestamp = 0
 
+  /** 服务端下行采样率可能是 24kHz；变化时重建解码器与播放上下文，否则声音会变调。 */
+  configure(sampleRate: number): void {
+    if (sampleRate === this.rate) return
+    this.close()
+    this.rate = sampleRate
+  }
+
   private ensure(): void {
     if (this.ctx) return
-    const ctx = new AudioContext({ sampleRate: SAMPLE_RATE })
+    const rate = this.rate
+    const ctx = new AudioContext({ sampleRate: rate })
     this.ctx = ctx
     this.decoder = new AudioDecoder({
       output: (data) => {
         const pcm = new Float32Array(data.numberOfFrames)
         data.copyTo(pcm, { planeIndex: 0, format: 'f32-planar' })
         data.close()
-        const buf = ctx.createBuffer(1, pcm.length, SAMPLE_RATE)
+        const buf = ctx.createBuffer(1, pcm.length, rate)
         buf.copyToChannel(pcm, 0)
         const src = ctx.createBufferSource()
         src.buffer = buf
@@ -117,7 +127,7 @@ export class Player {
       },
       error: (e) => console.error('opus decoder', e),
     })
-    this.decoder.configure({ codec: 'opus', sampleRate: SAMPLE_RATE, numberOfChannels: 1 })
+    this.decoder.configure({ codec: 'opus', sampleRate: rate, numberOfChannels: 1 })
   }
 
   push(frame: ArrayBuffer): void {
@@ -139,5 +149,7 @@ export class Player {
     void this.ctx?.close()
     this.decoder = null
     this.ctx = null
+    this.nextTime = 0
+    this.timestamp = 0
   }
 }

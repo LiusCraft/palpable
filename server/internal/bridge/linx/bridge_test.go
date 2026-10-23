@@ -3,6 +3,8 @@ package linx
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +44,10 @@ func newFakeLinx(t *testing.T) (*fakeLinx, string) {
 		if _, _, err := ws.ReadMessage(); err != nil {
 			return
 		}
-		_ = ws.WriteJSON(map[string]any{"type": "hello", "session_id": "linx-s1"})
+		_ = ws.WriteJSON(map[string]any{
+			"type": "hello", "transport": "websocket", "session_id": "linx-s1",
+			"audio_params": map[string]any{"format": "opus", "sample_rate": 24000, "channels": 1, "frame_duration": 60},
+		})
 		f.conn <- ws
 		for {
 			mt, data, err := ws.ReadMessage()
@@ -104,20 +109,70 @@ func readDeviceText(t *testing.T, ws *websocket.Conn) string {
 	}
 }
 
-func TestDialSendsAuthAndDeviceID(t *testing.T) {
+var (
+	macRe  = regexp.MustCompile(`^[0-9a-f]{2}(:[0-9a-f]{2}){5}$`)
+	uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+)
+
+func TestDialSendsLinxHandshakeHeaders(t *testing.T) {
 	f, url := newFakeLinx(t)
-	dialDevice(t, New(Config{URL: url, Token: "secret-token"}))
+	dialDevice(t, New(Config{URL: url, Token: "secret-token", AgentID: "agent-7"}))
 
 	select {
 	case h := <-f.headers:
 		if h.Get("Authorization") != "Bearer secret-token" {
 			t.Errorf("Authorization = %q", h.Get("Authorization"))
 		}
-		if h.Get("Device-Id") != "plush-001" {
-			t.Errorf("Device-Id = %q", h.Get("Device-Id"))
+		if got := h.Get("Device-Id"); !macRe.MatchString(got) || got != PseudoMAC("plush-001") {
+			t.Errorf("Device-Id = %q, want pseudo MAC of plush-001", got)
+		}
+		if h.Get("Protocol-Version") != "1" {
+			t.Errorf("Protocol-Version = %q", h.Get("Protocol-Version"))
+		}
+		if got := h.Get("Client-Id"); !uuidRe.MatchString(got) {
+			t.Errorf("Client-Id = %q, want UUID v4", got)
+		}
+		if h.Get("X-Agent-ID") != "agent-7" {
+			t.Errorf("X-Agent-ID = %q", h.Get("X-Agent-ID"))
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("linx was never dialed")
+	}
+}
+
+func TestAgentIDHeaderOmittedWhenUnset(t *testing.T) {
+	f, url := newFakeLinx(t)
+	dialDevice(t, New(Config{URL: url}))
+	h := <-f.headers
+	if _, ok := h["X-Agent-Id"]; ok {
+		t.Errorf("X-Agent-ID must not be sent when unset, got %q", h.Get("X-Agent-ID"))
+	}
+}
+
+func TestPseudoMAC(t *testing.T) {
+	a, b := PseudoMAC("plush-001"), PseudoMAC("plush-002")
+	if a == b {
+		t.Fatal("different devices must get different MACs")
+	}
+	if a != PseudoMAC("plush-001") {
+		t.Fatal("PseudoMAC must be stable")
+	}
+	if !macRe.MatchString(a) {
+		t.Fatalf("bad MAC format %q", a)
+	}
+	first, _ := strconv.ParseUint(a[:2], 16, 8)
+	if first&0x02 == 0 || first&0x01 != 0 {
+		t.Fatalf("first octet %02x must be locally administered unicast", first)
+	}
+}
+
+func TestDeviceGetsDownlinkAudioParamsFromLinx(t *testing.T) {
+	f, url := newFakeLinx(t)
+	dev := dialDevice(t, New(Config{URL: url}))
+	<-f.conn
+	got := readDeviceText(t, dev)
+	if !strings.Contains(got, `"type":"audio.downlink"`) || !strings.Contains(got, `"sample_rate":24000`) || !strings.Contains(got, `"frame_duration":60`) {
+		t.Fatalf("expected audio.downlink 24000/60, got %s", got)
 	}
 }
 
@@ -125,9 +180,10 @@ func TestMicStartForwardsListenAndAudio(t *testing.T) {
 	f, url := newFakeLinx(t)
 	dev := dialDevice(t, New(Config{URL: url}))
 	<-f.conn
+	readDeviceText(t, dev) // audio.downlink
 
 	_ = dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"mic.state","state":"start"}`))
-	if got := recvText(t, f.texts); !strings.Contains(got, `"state":"start"`) || !strings.Contains(got, `"mode":"auto"`) {
+	if got := recvText(t, f.texts); !strings.Contains(got, `"state":"start"`) || !strings.Contains(got, `"mode":"realtime"`) {
 		t.Fatalf("expected listen start, got %s", got)
 	}
 	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"listening"`) {
@@ -167,6 +223,7 @@ func TestTTSMapsToLightSpeakerAndAudio(t *testing.T) {
 	f, url := newFakeLinx(t)
 	dev := dialDevice(t, New(Config{URL: url}))
 	linx := <-f.conn
+	readDeviceText(t, dev) // audio.downlink
 
 	_ = linx.WriteJSON(map[string]any{"type": "stt", "text": "你好"})
 	if got := readDeviceText(t, dev); !strings.Contains(got, `"state":"thinking"`) {
