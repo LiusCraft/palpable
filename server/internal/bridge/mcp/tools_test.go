@@ -204,3 +204,15 @@ func TestProxyEdgeCases(t *testing.T) {
 		t.Fatalf("broken tool = %v", got)
 	}
 }
+
+func TestSchemasAreValidJSONSchema(t *testing.T) {
+	for _, tl := range BusinessTools(Services{}) {
+		var sch struct {
+			Type     string   `json:"type"`
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(tl.InputSchema, &sch); err != nil || sch.Type != "object" || sch.Required == nil {
+			t.Errorf("%s schema = %s", tl.Name, tl.InputSchema)
+		}
+	}
+}
