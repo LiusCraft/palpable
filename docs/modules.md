@@ -29,19 +29,39 @@
 
 | 能力 | 灵矽提供什么 | 可感要做什么 |
 | --- | --- | --- |
-| 听与说 | ASR、LLM、TTS、免按键的服务端 VAD | 桥接音频（M1 已完成） |
-| 记忆 | 按智能体的长期记忆：对话归档后抽取记忆片段与"记忆焦点"，运行时召回 | 为每个玩偶配置记忆焦点（孩子的名字、喜好、朋友等）；确认记忆的粒度与归属 |
-| 认得声音 | 声纹：每个智能体登记说话人，每轮语音识别后把"系统声纹标注"附给 AI，AI 据此区分谁在说话 | 认主时登记主人声纹；其他声音识别为"未识别" |
-| 看图片 | 视觉模型：设备端拍照后上传到灵矽的视觉解释接口，AI 拿到画面描述 | 提供"拍照"的设备端工具；Web 演示用场景截图代替摄像头 |
-| 云端 MCP 扩展 | 智能体可配置多个 MCP 服务，对话中按需连接并调用其工具 | **可感自己提供一个 MCP 服务**，暴露建群、加群、切群、查好友等业务工具 |
-| 设备端 MCP | 设备在 `hello` 声明支持 MCP，之后通过 `mcp` 消息（JSON-RPC）向 AI 暴露自己的工具 | 网关透传 `mcp` 消息；Web 模拟器与固件各自实现设备端工具 |
+| 听与说 | ASR、LLM、TTS；`listen` 的 `realtime` 模式为全双工，说话可打断 AI | 桥接音频（M1 已完成，有待修正项，见 2.1） |
+| 记忆 | 每个智能体一个记忆容器；按身份（`identify_id`，文档示例为设备 MAC）隔离；有"记忆焦点"（结构化字段）和"记忆片段"，均可通过 API 读写 | 开通容器，定义记忆焦点（孩子名字、喜好、朋友等）；需要时主动写入记忆片段，如"小兔是我的好朋友" |
+| 认得声音 | 声纹 V2：创建说话人、登记声纹、把说话人绑到智能体；可开启"只回应已绑定的说话人" | 认主时登记主人声纹并绑定；开启"只和主人说话" |
+| 看图片 | 视觉模型；端侧 MCP 初始化时平台下发视觉接口地址和令牌，设备把图片交给它 | 提供拍照的设备端工具；Web 演示用场景截图代替摄像头 |
+| 云端 MCP 扩展 | 智能体可调用云端 MCP 服务；调用时平台带上设备、智能体、会话三个标识头 | **可感自己提供一个云端 MCP 服务**，暴露建群、加群、切群、查好友等业务工具 |
+| 设备端 MCP | 设备在 `hello` 声明 `mcp`，平台发 `initialize` 与 `tools/list`，之后按需 `tools/call`；工具名形如 `self.模块.功能` | 网关透传 `mcp` 消息；Web 模拟器与固件各自实现设备端工具；可用"设备工具描述 API"补充工具说明 |
 
 结论：
-- **语音建群、切群**不再靠"自定义工具调用下发给设备"，而是做成可感自己的 **MCP 服务**，由灵矽的智能体在对话中调用。这样 AI 理解指令，业务规则仍在我们的服务端。
-- **灯光、振动、拍照**做成**设备端 MCP 工具**，AI 可以主动用灯光表达情绪、用振动提示，而不是只靠服务端根据状态硬编码。
-- **认主**依赖灵矽的声纹识别结果，我们不再自己做"校验是不是主人"。
+- **语音建群、切群**做成可感自己的 **MCP 服务**，由灵矽的智能体在对话中调用。AI 理解指令，业务规则仍在我们的服务端。
+- **灯光、振动、拍照**做成**设备端 MCP 工具**，AI 可以主动用灯光表达情绪、用振动提示。
+- **认主**依赖灵矽的声纹识别，我们不再自己做"校验是不是主人"。
 
-> 以上能力依据灵矽的设计文档与源码整理（声纹 v2 观察、长期记忆、视觉、MCP 动态加载）。智能体的创建与配置接口（尤其是给智能体挂 MCP 服务、登记声纹说话人）我还没有验证，列在第 10 节待决事项。
+### 2.1 灵矽接入的已确认事实与约束
+
+以下来自[灵矽官方文档](https://linx.qiniu.com/docs/)，直接影响设计。
+
+| 事实 | 影响 |
+| --- | --- |
+| 握手 `Device-Id` 必须是设备 MAC，且设备要先在平台注册或绑定到智能体；可用 `POST /xiaozhi/device/preregister` 按 MAC 批量预注册并关联智能体 | 每台虚拟设备需要一个伪 MAC，由我们生成并预注册。`device` 表增加 `linx_mac` 字段；协议里的 `device_id` 仍可自由格式 |
+| 握手头还需要 `Protocol-Version: 1`、`Client-Id`（UUID） | **M1 待修正**：桥接目前没带 `Protocol-Version`，`Client-Id` 也不是 UUID |
+| `listen.mode` 推荐 `realtime`（全双工）；文档里 `auto` 是唤醒词触发 | **M1 待修正**：桥接目前用 `auto`，免按键对话应改为 `realtime` |
+| 服务端下行音频的采样率可能是 24000 或 16000，帧长 20/40/60ms，以服务端 `hello` 返回的 `audio_params` 为准 | **M1 待修正**：我们的协议把上下行都写死为 16kHz，浏览器按 16k 解码，若灵矽返回 24k 会变调。需要把下行音频参数通过 `hello.ack` 转给设备 |
+| `hello.agent_params.custom_replace_prompt` 可以替换系统提示词里的 `{{变量}}` | 孩子的名字、小伙伴的名字可以在每次会话开始时注入，不必改智能体配置 |
+| 智能体的创建、更新、删除都有 REST 接口（`POST/PUT/DELETE /xiaozhi/agent`），可设置系统提示词、记忆模型、声纹模型、`extra` 参数等 | `agent` 模块可以自动化开通，不必手动配置 |
+| 切换智能体靠握手头 `X-Agent-ID`；会话内只能用 `listen.agent_params.voice` 切换音色，不能切智能体 | 智能体与设备的对应关系要在连接前定好 |
+| 记忆容器每个智能体一个；记忆值与片段按 `identify_id` 隔离，可读写 | 记忆隔离按设备做即可，不要求每个玩偶一个智能体 |
+| 声纹说话人绑定与"只回应已绑定说话人"都是**智能体级**配置 | 要让"只有主人能和这个玩偶说话"，就需要**每个玩偶一个智能体**，否则孩子 A 的声纹会让孩子 B 的玩偶也认得 |
+| 声纹登记接收的是 `audio_url`（平台可访问的地址），并且可以从智能体的 `chat-history` 接口里挑选最近的语音样本 | 不需要服务端自己把 Opus 解码成 wav：认主时让孩子说话，从聊天记录里取样本登记。样本格式文档未说明，需验证 |
+| 声纹识别结果只体现在智能体的行为上，接口不返回识别详情 | 我们不能在代码里读到"当前说话的是不是主人"，只能依赖智能体的行为 |
+| 云端 MCP 基于 SSE：`GET /mcp` 长连接加 `POST /mcp/message`；在灵矽的 MCP 管理页登记 SSE 地址；调用时平台自动带 `X-Linx-Device-Id`、`X-Linx-Agent-Id`、`X-Linx-Session-Id` | `mcpserver` 可以从请求头读到调用设备，不让 AI 自己填设备 ID。文档没有说明认证与自定义请求头，我们需要自己做防护（例如不公开的路径加来源限制） |
+| 云端 MCP 工具返回里可带 `structuredContent.funcs` 驱动设备动作；内置函数有 `linx_play`、`linx_stop`、`change_role` | 建群后可以让设备直接播报 4 位码 |
+| 云端 MCP 服务如何挂到某个智能体，文档没有说明（智能体接口里只有 `functions` 插件列表） | **未验证**，S0 的重点 |
+| 聊天记录接口按智能体查会话，消息含文本和音频地址；**没有按日期过滤，也没有摘要**；音频约 60 天后清理 | `history` 的"今日回顾"要自己按会话创建时间筛选，摘要要自己生成或只展示原话 |
 
 ## 3. 服务端模块（`server/internal/`）
 
@@ -91,11 +111,12 @@ type Channels interface {
     OnAudio(d DeviceID, frame []byte) // 转发前必须过 Relations.AreFriends
 }
 
-// agent：玩偶智能体
+// agent：玩偶智能体（每个玩偶一个智能体，经灵矽 REST 开通）
 type Agents interface {
-    Ensure(ctx context.Context, d DeviceID) (AgentID, error)            // 首次上线时开通
-    SetPersona(ctx context.Context, d DeviceID, name string) error      // 孩子起名后更新人设
-    EnrollOwnerVoice(ctx context.Context, d DeviceID, wav []byte) error // 登记主人声纹
+    Ensure(ctx context.Context, d DeviceID) (AgentRef, error)    // 首次上线：创建智能体、记忆容器、预注册伪 MAC
+    SetNames(ctx context.Context, d DeviceID, doll, kid string) error // 起名后写入会话变量与记忆焦点
+    EnrollOwnerVoice(ctx context.Context, d DeviceID) error      // 从聊天记录取样本登记声纹，并绑定到智能体
+    RememberFact(ctx context.Context, d DeviceID, fact string) error // 写入一条记忆片段，如"小兔是好朋友"
 }
 
 // identity：设备档案
@@ -127,6 +148,7 @@ type History interface {
 
 | 方向 | 消息 | 用途 |
 | --- | --- | --- |
+| 下行 | `hello.ack` 增加 `downlink_audio`（`sample_rate`、`frame_duration`） | 把灵矽下行音频参数转给设备，浏览器和固件按它配置 Opus 解码器，上行仍是 16kHz / 60ms |
 | 双向 | `mcp`（`payload`：JSON-RPC） | 设备端 MCP。设备在 `hello.capabilities` 声明 `mcp`，网关把设备与灵矽之间的 `mcp` 消息原样透传，不解析工具内容 |
 | 下行 | `channel.state`（`name`、`color`、`event`：joined / switched / left） | 设备用灯色和提示音确认当前群 |
 | 下行 | `friend.state`（`event`：pending / confirmed / removed，`device_id`、`name`） | 贴近成为好友时的震动与提示 |
@@ -174,7 +196,7 @@ type History interface {
 
 | 表 | 关键字段 |
 | --- | --- |
-| `device` | `device_id`、`name`、`agent_id`、`owner_voice_id`、`guardian_id`、`created_at` |
+| `device` | `device_id`、`linx_mac`（灵矽用的伪 MAC）、`name`、`agent_id`、`speaker_id`（灵矽声纹说话人）、`guardian_id`、`created_at` |
 | `guardian` | `guardian_id`、`display_name` |
 | `friendship` | `a`、`b`、`status`（pending / confirmed / removed）、`confirmed_by`、`created_at` |
 | `group` | `group_id`、`owner`、`code`、`expires_at` |
@@ -207,14 +229,14 @@ type History interface {
 
 | 编号 | 任务 | 依赖 | 验收 |
 | --- | --- | --- | --- |
-| S0 | **验证灵矽接入能力**：创建智能体、挂 MCP 服务、登记声纹说话人、设备端 MCP 透传 | M1 | 用最小例子跑通：AI 调用一个自建 MCP 工具；设备端暴露一个工具被 AI 调用；结论写进待决事项 |
+| S0 | **验证灵矽接入的剩余未知项**：① 伪 MAC 预注册后能否握手；② 云端 MCP 服务如何挂到智能体；③ 从聊天记录取样本登记声纹是否成功；④ 拍照上传流程；⑤ 云端 MCP 的认证方式 | M1 | 每项给出"可行 / 不可行 / 需变通"的结论并写进待决事项；至少跑通：AI 调用一个自建 MCP 工具、设备端暴露一个工具被 AI 调用 |
 | S1 | `store`：SQLite、迁移、第 7 节的表、仓储接口 | — | 增删改查有测试；换假实现不改业务代码 |
-| S2 | `bridge/linx`：`mcp` 消息透传、`Say`、按设备选择智能体 | S0 | 假灵矽下发 `tools/call` 能到设备并带回结果；`Say` 不经 LLM 直出语音 |
-| S3 | `agent` + `identity`：开通智能体、起名更新人设、登记主人声纹、首次上线引导 | S0、S1、S2 | 首次上线触发问候；说名字后保存；主人声纹登记成功，AI 能区分"主人"与"未识别" |
+| S2 | `bridge/linx`：**修正 M1 遗留项**（`realtime` 模式、`Protocol-Version` 与 UUID `Client-Id`、下行音频参数转给设备、`X-Agent-ID`）；`mcp` 消息透传；`Say`；`hello.agent_params` 注入名字 | S0 | 假灵矽返回 24kHz 时设备按 24kHz 解码；`tools/call` 能到设备并带回结果；`Say` 不经 LLM 直出语音 |
+| S3 | `agent` + `identity`：开通智能体与记忆容器、预注册伪 MAC、起名写入记忆焦点、登记并绑定主人声纹、开启"只回应主人"、首次上线引导 | S0、S1、S2 | 首次上线触发问候；说名字后保存；主人声纹登记成功；非主人说话时玩偶不回应 |
 | S4 | `relation`：好友状态机与 `proximity` 处理 | S1 | 贴近产生 pending；确认后 `AreFriends` 为真；解除后为假 |
 | S5 | `zone` + `channel`：频道、成员、音频转发、`presence` | S4 | 非好友收不到音频；好友收到；加入频道好友收到提示 |
 | S6 | `mcpserver`：建群、加群、切群、当前群、好友、附近的小朋友 | S0、S5 | AI 说"创建群聊"能拿到 4 位码并播报；4 位码过期失效；切群后设备收到 `channel.state` |
-| S7 | `history`：事件记录与今日回顾 | S1 | 一天内遇到的小朋友、分享记录、聊天摘要可查询 |
+| S7 | `history`：事件记录与今日回顾（聊天内容取自灵矽聊天记录接口，按会话时间自行筛选） | S1 | 一天内遇到的小朋友、分享记录、聊天内容可查询 |
 | S8 | `describe`：画面分享 | S2、S5、S7 | 小朋友让小伙伴描述画面，AI 通过拍照工具得到描述，频道好友听到，孩子本人也听到，并写入历史 |
 | S9 | `parentapi`：第 6 节接口 | S4、S7 | 接口有测试；未授权请求被拒绝 |
 | S10 | `world`：观察通道 | S5 | 地图能实时看到位置与谁在说话 |
@@ -245,12 +267,15 @@ S0（验证灵矽能力，最先做）
 
 ## 10. 待决事项
 
+已确认的事实见 2.1。下面只列仍未解决的。
+
 | 事项 | 影响 | 建议 |
 | --- | --- | --- |
-| 灵矽是否提供创建与配置智能体的接口（挂 MCP 服务、登记声纹说话人、设置人设与记忆焦点） | `agent`、`mcpserver`、`identity` 能否自动化 | S0 先验证；若没有接口，演示阶段手动配置一个模板智能体，所有玩偶共用，记忆按设备区分 |
-| 一个玩偶一个智能体，还是共用模板智能体 | 记忆隔离与配置成本 | 记忆按智能体隔离，所以倾向一个玩偶一个智能体；若创建成本高则退化为共用模板，记忆区分靠设备标识 |
-| 灵矽声纹登记需要 wav，而设备上行是 Opus | `agent.EnrollOwnerVoice` 需要服务端把 Opus 解码成 wav | 确认 Go 侧解码方案（CGO 的 libopus 或纯 Go 实现），Windows 上免 CGO 更省事；或确认能否用浏览器直接上传 wav |
-| 可感云端 MCP 服务如何识别调用的是哪台设备 | `mcpserver` 的安全与归属 | 每个智能体挂载 MCP 时带设备凭证；需确认灵矽是否支持按智能体配置请求头 |
-| 拍照工具的上传流程（设备把图片传到灵矽视觉解释接口，需要它下发的地址与令牌） | `describe` 与 W4 | 按灵矽视觉文档的流程在 S0 里跑通；Web 用 canvas 截图 |
-| `mcp` 透传的安全边界 | 设备端工具由 AI 调用，输出会进入对话 | 网关只透传不解析；工具返回内容需要长度限制，避免被滥用 |
+| 云端 MCP 服务如何挂到某个智能体（控制台操作，还是智能体 `functions` 字段里的插件） | `mcpserver` 能否自动为每个玩偶智能体开通 | S0 先验证；若只能在控制台配置，演示阶段手动为模板配置一次，新智能体由模板复制 |
+| 云端 MCP 的认证 | `mcpserver` 的安全 | 文档未说明认证；用不公开的路径加来源地址限制，并只信任平台带来的三个标识头；需要灵矽确认 |
+| 伪 MAC 预注册后能否被接受 | 虚拟设备能否接入灵矽 | S0 验证；失败则演示用真实 MAC 的设备或在灵矽控制台加设备 |
+| 声纹登记用聊天记录里的样本，样本格式与时长是否满足要求 | `identity` 认主流程 | S0 验证；样本太短时让孩子多说一句再取样本 |
+| 拍照上传流程：端侧 MCP 初始化下发视觉接口地址和令牌，文档没有写明图片如何上传 | `describe` 与 W4 | 参考灵矽视觉文档的接口，在 S0 里跑通；Web 用 canvas 截图 |
+| 今日回顾的摘要由谁生成 | `history` 工作量 | 先展示聊天原话与事件，摘要后续再做 |
+| `mcp` 透传的安全边界 | 设备端工具由 AI 调用，输出会进入对话 | 网关只透传不解析；工具返回内容限制长度 |
 | 家长确认在演示中的简化 | `relation` 的状态机是否多一步 | 保留 pending 状态，演示中用家长端窗口或孩子语音确认 |
