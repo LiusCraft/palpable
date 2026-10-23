@@ -9,6 +9,7 @@
     { "$ref": "#/$defs/MicState" },
     { "$ref": "#/$defs/Proximity" },
     { "$ref": "#/$defs/Location" },
+    { "$ref": "#/$defs/Mcp" },
     { "$ref": "#/$defs/HelloAck" },
     { "$ref": "#/$defs/AudioDownlink" },
     { "$ref": "#/$defs/Light" },
@@ -16,6 +17,8 @@
     { "$ref": "#/$defs/Sound" },
     { "$ref": "#/$defs/SpeakerState" },
     { "$ref": "#/$defs/Presence" },
+    { "$ref": "#/$defs/ChannelState" },
+    { "$ref": "#/$defs/FriendState" },
     { "$ref": "#/$defs/Error" }
   ],
   "$defs": {
@@ -31,7 +34,7 @@
       }
     },
     "Capability": {
-      "enum": ["mic", "speaker", "light", "haptic", "proximity", "location", "wake"]
+      "enum": ["mic", "speaker", "light", "haptic", "proximity", "location", "wake", "mcp"]
     },
     "MAC": {
       "type": "string",
@@ -154,7 +157,7 @@
       "required": ["type", "name"],
       "properties": {
         "type": { "const": "sound" },
-        "name": { "enum": ["connected", "joined", "left", "switched", "error"] }
+        "name": { "enum": ["connected", "joined", "left", "switched", "error", "busy", "friend"] }
       }
     },
     "SpeakerState": {
@@ -165,7 +168,8 @@
         "type": { "const": "speaker.state" },
         "state": { "enum": ["start", "stop"] },
         "source": { "enum": ["ai", "peer"] },
-        "from": { "type": "string", "description": "source 为 peer 时的发言设备" }
+        "from": { "type": "string", "description": "source 为 peer 时的发言设备" },
+        "name": { "type": "string", "maxLength": 32, "description": "source 为 peer 时发言者小伙伴的名字，供设备展示" }
       }
     },
     "Presence": {
@@ -178,6 +182,41 @@
         "device_id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "maxLength": 32, "description": "玩偶的名字，供设备播报" },
         "channel": { "type": "string", "minLength": 1 }
+      }
+    },
+    "Mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "payload"],
+      "description": "设备端 MCP，双向。payload 为 JSON-RPC 2.0 消息，由服务端代理与灵矽之间转发",
+      "properties": {
+        "type": { "const": "mcp" },
+        "payload": { "type": "object" }
+      }
+    },
+    "ChannelState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "event", "channel", "name"],
+      "description": "前台频道变化；设备据此切换灯色并提示",
+      "properties": {
+        "type": { "const": "channel.state" },
+        "event": { "enum": ["joined", "switched", "left"] },
+        "channel": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "maxLength": 32 },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+      }
+    },
+    "FriendState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "event", "device_id"],
+      "description": "好友关系变化；pending 时设备振动并提示，确认由家长端完成",
+      "properties": {
+        "type": { "const": "friend.state" },
+        "event": { "enum": ["pending", "confirmed", "removed"] },
+        "device_id": { "$ref": "#/$defs/MAC" },
+        "name": { "type": "string", "maxLength": 32 }
       }
     },
     "Error": {
