@@ -18,7 +18,7 @@ import (
 
 const (
 	DefaultBase    = "https://xrobo.qiniu.com"
-	DefaultOTA     = "https://xrobo-io.qiniuapi.com/v1/ota/"
+	DefaultOTA     = "https://xrobo.qiniu.com/xiaozhi/ota/"
 	requestTimeout = 10 * time.Second
 
 	codeMemoryExists = 614 // 智能体已有记忆容器

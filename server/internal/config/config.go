@@ -31,7 +31,7 @@ type Linx struct {
 	WSURL          string `yaml:"ws_url"`          // 例如 wss://xrobo-io.qiniuapi.com/v1/ws/
 	Token          string `yaml:"token"`           // Bearer 令牌，WebSocket 与 REST 共用
 	APIBase        string `yaml:"api_base"`        // REST 地址，默认 https://xrobo.qiniu.com
-	OTAURL         string `yaml:"ota_url"`         // OTA 地址，激活预注册的设备；默认 https://xrobo-io.qiniuapi.com/v1/ota/
+	OTAURL         string `yaml:"ota_url"`         // OTA 地址，激活预注册的设备；默认 https://xrobo.qiniu.com/xiaozhi/ota/
 	VoiceprintBase string `yaml:"voiceprint_base"` // 声纹服务地址（演示环境）
 }
 
