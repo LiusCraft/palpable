@@ -9,6 +9,7 @@ export type PalpableMessage =
   | MicState
   | Proximity
   | Location
+  | Mcp
   | HelloAck
   | AudioDownlink
   | Light
@@ -16,12 +17,14 @@ export type PalpableMessage =
   | Sound
   | SpeakerState
   | Presence
+  | ChannelState
+  | FriendState
   | Error;
 /**
  * 设备 MAC，小写、冒号分隔；也是设备在灵矽侧的 Device-Id
  */
 export type MAC = string;
-export type Capability = "mic" | "speaker" | "light" | "haptic" | "proximity" | "location" | "wake";
+export type Capability = "mic" | "speaker" | "light" | "haptic" | "proximity" | "location" | "wake" | "mcp";
 export type LightState = "idle" | "listening" | "thinking" | "speaking" | "peer_talking" | "muted";
 
 export interface Hello {
@@ -1049,6 +1052,13 @@ export interface Location {
   lat: number;
   lng: number;
 }
+/**
+ * 设备端 MCP，双向。payload 为 JSON-RPC 2.0 消息，由服务端代理与灵矽之间转发
+ */
+export interface Mcp {
+  type: "mcp";
+  payload: {};
+}
 export interface HelloAck {
   type: "hello.ack";
   session_id: string;
@@ -1077,7 +1087,7 @@ export interface Haptic {
 }
 export interface Sound {
   type: "sound";
-  name: "connected" | "joined" | "left" | "switched" | "error";
+  name: "connected" | "joined" | "left" | "switched" | "error" | "busy" | "friend";
 }
 export interface SpeakerState {
   type: "speaker.state";
@@ -1087,6 +1097,10 @@ export interface SpeakerState {
    * source 为 peer 时的发言设备
    */
   from?: string;
+  /**
+   * source 为 peer 时发言者小伙伴的名字，供设备展示
+   */
+  name?: string;
 }
 export interface Presence {
   type: "presence";
@@ -1097,6 +1111,25 @@ export interface Presence {
    */
   name?: string;
   channel: string;
+}
+/**
+ * 前台频道变化；设备据此切换灯色并提示
+ */
+export interface ChannelState {
+  type: "channel.state";
+  event: "joined" | "switched" | "left";
+  channel: string;
+  name: string;
+  color?: string;
+}
+/**
+ * 好友关系变化；pending 时设备振动并提示，确认由家长端完成
+ */
+export interface FriendState {
+  type: "friend.state";
+  event: "pending" | "confirmed" | "removed";
+  device_id: MAC;
+  name?: string;
 }
 export interface Error {
   type: "error";

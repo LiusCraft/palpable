@@ -99,6 +99,10 @@ func TestEncodedDownstreamMatchesSchema(t *testing.T) {
 		&SpeakerState{Type: TypeSpeakerState, State: "start", Source: "peer", From: "plush-002"},
 		&Presence{Type: TypePresence, Event: "join", DeviceID: "plush-002", Name: "小兔", Channel: "park"},
 		&Error{Type: TypeError, Code: CodeBadMessage, Message: "x"},
+		&ChannelState{Type: TypeChannelState, Event: "joined", Channel: "zone:park", Name: "公园", Color: "#4caf50"},
+		&FriendState{Type: TypeFriendState, Event: "pending", DeviceID: "02:00:00:00:00:02", Name: "小兔"},
+		&Mcp{Type: TypeMcp, Payload: json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)},
+		&Sound{Type: TypeSound, Name: "busy"},
 	}
 	for _, m := range msgs {
 		raw, err := Encode(m)
@@ -138,7 +142,7 @@ func TestDecodeUpstreamRejectsBadInput(t *testing.T) {
 
 func isUpstream(t string) bool {
 	switch t {
-	case TypeHello, TypeWake, TypeMicState, TypeProximity, TypeLocation:
+	case TypeHello, TypeWake, TypeMicState, TypeProximity, TypeLocation, TypeMcp:
 		return true
 	}
 	return false

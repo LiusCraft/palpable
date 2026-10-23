@@ -24,6 +24,7 @@ const (
 	TypeMicState      = "mic.state"
 	TypeProximity     = "proximity"
 	TypeLocation      = "location"
+	TypeMcp           = "mcp"
 	TypeHelloAck      = "hello.ack"
 	TypeAudioDownlink = "audio.downlink"
 	TypeLight         = "light"
@@ -31,6 +32,8 @@ const (
 	TypeSound         = "sound"
 	TypeSpeakerState  = "speaker.state"
 	TypePresence      = "presence"
+	TypeChannelState  = "channel.state"
+	TypeFriendState   = "friend.state"
 	TypeError         = "error"
 )
 
@@ -94,6 +97,12 @@ type Location struct {
 	Lng  float64 `json:"lng"`
 }
 
+// Mcp 双向：payload 是 JSON-RPC 2.0 消息，服务端只做代理，不改写设备工具的内容。
+type Mcp struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 // ---- 下行：服务端 → 设备 ----
 
 type HelloAck struct {
@@ -132,6 +141,7 @@ type SpeakerState struct {
 	State  string `json:"state"`
 	Source string `json:"source"`
 	From   string `json:"from,omitempty"`
+	Name   string `json:"name,omitempty"`
 }
 
 type Presence struct {
@@ -140,6 +150,21 @@ type Presence struct {
 	DeviceID string `json:"device_id"`
 	Name     string `json:"name,omitempty"`
 	Channel  string `json:"channel"`
+}
+
+type ChannelState struct {
+	Type    string `json:"type"`
+	Event   string `json:"event"`
+	Channel string `json:"channel"`
+	Name    string `json:"name"`
+	Color   string `json:"color,omitempty"`
+}
+
+type FriendState struct {
+	Type     string      `json:"type"`
+	Event    string      `json:"event"`
+	DeviceID id.DeviceID `json:"device_id"`
+	Name     string      `json:"name,omitempty"`
 }
 
 type Error struct {
@@ -161,6 +186,9 @@ func (*Sound) MsgType() string         { return TypeSound }
 func (*SpeakerState) MsgType() string  { return TypeSpeakerState }
 func (*Presence) MsgType() string      { return TypePresence }
 func (*Error) MsgType() string         { return TypeError }
+func (*Mcp) MsgType() string           { return TypeMcp }
+func (*ChannelState) MsgType() string  { return TypeChannelState }
+func (*FriendState) MsgType() string   { return TypeFriendState }
 
 // DecodeUpstream 解析设备上行的文本消息；只接受上行类型，未知或非法一律返回 ErrBadMessage。
 func DecodeUpstream(data []byte) (Message, error) {
@@ -183,6 +211,8 @@ func DecodeUpstream(data []byte) (Message, error) {
 		msg = &Proximity{}
 	case TypeLocation:
 		msg = &Location{}
+	case TypeMcp:
+		msg = &Mcp{}
 	default:
 		return nil, fmt.Errorf("%w: unknown upstream type %q", ErrBadMessage, head.Type)
 	}
@@ -236,6 +266,10 @@ func validate(msg Message) error {
 			if p.DeviceID == "" || p.Strength < 0 || p.Strength > 1 {
 				return errors.New("invalid proximity peer")
 			}
+		}
+	case *Mcp:
+		if len(m.Payload) == 0 || m.Payload[0] != '{' {
+			return errors.New("mcp payload must be a JSON object")
 		}
 	case *Location:
 		if m.Lat < -90 || m.Lat > 90 || m.Lng < -180 || m.Lng > 180 {
