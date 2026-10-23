@@ -337,6 +337,19 @@ func (d *Devices) writeMemory(ctx context.Context, p Profile) {
 	}
 }
 
+// ByGuardian 返回家长名下的设备。
+func (d *Devices) ByGuardian(ctx context.Context, g id.GuardianID) ([]Profile, error) {
+	recs, err := d.repo.ListByGuardian(ctx, g)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Profile, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, fromRecord(r))
+	}
+	return out, nil
+}
+
 func (d *Devices) Bind(ctx context.Context, dev id.DeviceID, g id.GuardianID) error {
 	return d.update(ctx, dev, func(p *Profile) { p.Guardian = g })
 }

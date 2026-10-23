@@ -84,6 +84,24 @@ func (r memDevices) Update(_ context.Context, d Device) error {
 	return nil
 }
 
+func (r memDevices) ListByGuardian(_ context.Context, g id.GuardianID) ([]Device, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	var out []Device
+	for _, d := range r.m.devices {
+		if d.Guardian == g {
+			out = append(out, d)
+		}
+	}
+	slices.SortFunc(out, func(a, b Device) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(string(a.ID), string(b.ID))
+	})
+	return out, nil
+}
+
 func (r memDevices) Delete(_ context.Context, d id.DeviceID) error {
 	r.m.mu.Lock()
 	defer r.m.mu.Unlock()

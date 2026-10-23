@@ -23,6 +23,7 @@ type Demo struct {
 	Guardian     string `yaml:"guardian"`      // 新设备自动绑定到这个家长 ID；空则不绑定
 	GuardianName string `yaml:"guardian_name"` // 家长显示名
 	VoiceConsent bool   `yaml:"voice_consent"` // 预置监护人对声纹登记的同意
+	ParentToken  string `yaml:"parent_token"`  // 家长端令牌，代表 Guardian；空则不开放 /api
 }
 
 // Linx 是灵矽接入配置；WSURL 为空表示不启用 AI 对话。

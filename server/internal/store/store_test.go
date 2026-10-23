@@ -82,6 +82,16 @@ func TestDevices(t *testing.T) {
 			t.Fatalf("got %+v, want %+v", got, upd)
 		}
 
+		must(t, r.Create(ctx, Device{ID: macB, Guardian: "g1", CreatedAt: t0.Add(time.Second)}))
+		must(t, r.Create(ctx, Device{ID: macC, Guardian: "g2", CreatedAt: t0}))
+		mine, err := r.ListByGuardian(ctx, "g1")
+		must(t, err)
+		if len(mine) != 2 || mine[0].ID != macA || mine[1].ID != macB {
+			t.Fatalf("ListByGuardian = %+v", mine)
+		}
+		must(t, r.Delete(ctx, macB))
+		must(t, r.Delete(ctx, macC))
+
 		wantErr(t, r.Update(ctx, Device{ID: macB}), ErrNotFound)
 		wantErr(t, r.Delete(ctx, macB), ErrNotFound)
 	})

@@ -188,6 +188,14 @@ func (r sqlDevices) Update(ctx context.Context, d Device) error {
 	return nil
 }
 
+func (r sqlDevices) ListByGuardian(ctx context.Context, g id.GuardianID) ([]Device, error) {
+	out, err := queryList(ctx, r.db, scanDevice, "SELECT "+deviceCols+" FROM device WHERE guardian_id = ? ORDER BY created_at, device_id", g)
+	if err != nil {
+		return nil, fmt.Errorf("list devices of %s: %w", g, err)
+	}
+	return out, nil
+}
+
 func (r sqlDevices) Delete(ctx context.Context, d id.DeviceID) error {
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, "DELETE FROM device WHERE device_id = ?", d)

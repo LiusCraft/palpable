@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
+	"github.com/LiusCraft/palpable/server/internal/config"
 	"github.com/LiusCraft/palpable/server/internal/device"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/relation"
@@ -202,6 +204,25 @@ func TestWithoutLinxDevicesStillConnect(t *testing.T) {
 	}
 	_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"mic.state","state":"start"}`))
 	_ = ws.WriteMessage(websocket.BinaryMessage, []byte{1})
+}
+
+func TestParentAPIMountedOnlyWithToken(t *testing.T) {
+	rec := httptest.NewRecorder()
+	mustApp(t, nil).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/kids", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("without parent token /api must not exist: %d", rec.Code)
+	}
+	a, err := newApp(context.Background(), deps{store: store.NewMemory(), demo: config.Demo{Guardian: "g1", ParentToken: "tok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/api/kids", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec = httptest.NewRecorder()
+	a.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("/api/kids = %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestHealthz(t *testing.T) {
