@@ -417,7 +417,8 @@ type Profile struct {
 type Relations interface {
     AreFriends(ctx context.Context, a, b id.ParticipantID) (bool, error)  // 热路径，内存缓存
     FilterFriends(ctx context.Context, viewer id.ParticipantID, ps []id.ParticipantID) []id.ParticipantID
-    Friends(ctx context.Context, d id.DeviceID) ([]Friendship, error)
+    Friends(ctx context.Context, d id.DeviceID) ([]Friendship, error)    // 含待确认，不含已解除
+    Request(ctx context.Context, reqID string) (Friendship, error)     // parentapi 确认前校验归属
     OnProximity(ctx context.Context, d id.DeviceID, peers []Peer) error
     Confirm(ctx context.Context, reqID string, by id.GuardianID) error
     Remove(ctx context.Context, a, b id.DeviceID) error
@@ -442,7 +443,9 @@ type Peer struct { Device id.DeviceID; Strength float64 } // 0..1，越大越近
 
 **规则**
 - 参与者先经 `id.OwnerDevice` 解析为设备再判断。
-- 某个 `Strength ≥ 0.8` 持续 1.5 秒，且**双方都上报了对方**，才生成 `Pending`；已是好友或已有未处理请求则忽略。
+- 某个 `Strength ≥ 0.8` 持续 1.5 秒，且**双方都上报了对方**，才生成 `Pending`；已是好友或已有未处理请求则忽略。每次 `proximity` 是完整快照，没出现的设备计时中断；上报间隔超过 3 秒也视为中断。
+- 解除后再次贴近，复用原记录重新进入 `Pending`。
+- `AreFriends` 读不加锁的好友快照，启动时从存储装载。
 - 只有 `Confirm` 能让 `AreFriends` 为真；`Remove` 立即生效并发事件。
 
 **依赖** store、id。

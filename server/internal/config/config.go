@@ -12,8 +12,9 @@ import (
 )
 
 type Config struct {
-	Addr string `yaml:"addr"`
-	Linx Linx   `yaml:"linx"`
+	Addr   string `yaml:"addr"`
+	DBPath string `yaml:"db_path"` // SQLite 文件
+	Linx   Linx   `yaml:"linx"`
 }
 
 // Linx 是灵矽接入配置；WSURL 为空表示不启用 AI 对话。
@@ -28,7 +29,7 @@ func (l Linx) Enabled() bool { return l.WSURL != "" }
 // Load 读取并解析 path。文件不存在时返回默认配置，便于本地不接灵矽直接跑；
 // 其他错误（含未知字段）一律上抛，避免拼错的键被静默忽略。
 func Load(path string) (Config, error) {
-	cfg := Config{Addr: ":8080"}
+	cfg := Config{Addr: ":8080", DBPath: "palpable.db"}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, nil

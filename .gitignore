@@ -34,3 +34,8 @@ go.work.sum
 
 # server config (contains secrets)
 server/config.yaml
+
+# 本地数据库
+server/*.db
+server/*.db-shm
+server/*.db-wal

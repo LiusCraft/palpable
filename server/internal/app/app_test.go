@@ -12,6 +12,8 @@ import (
 
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
 	"github.com/LiusCraft/palpable/server/internal/id"
+	"github.com/LiusCraft/palpable/server/internal/relation"
+	"github.com/LiusCraft/palpable/server/internal/store"
 )
 
 const mac id.DeviceID = "02:00:00:00:00:01"
@@ -43,9 +45,79 @@ func (f *fakeAI) want(t *testing.T, call string) {
 	}
 }
 
+func mustApp(t *testing.T, f ai) *App {
+	t.Helper()
+	d := deps{store: store.NewMemory()}
+	if f != nil {
+		d.ai = f
+	}
+	a, err := newApp(context.Background(), d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// connect 以 mac 接入并读掉 hello.ack。
+func connect(t *testing.T, srv *httptest.Server, mac id.DeviceID) *websocket.Conn {
+	t.Helper()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ws.Close() })
+	hello := strings.Replace(helloJSON, "02:00:00:00:00:01", string(mac), 1)
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(hello)); err != nil {
+		t.Fatal(err)
+	}
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := ws.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	return ws
+}
+
+func readText(t *testing.T, ws *websocket.Conn) string {
+	t.Helper()
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		mt, data, err := ws.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mt == websocket.TextMessage {
+			return string(data)
+		}
+	}
+}
+
+func TestRelationEventsReachBothDevices(t *testing.T) {
+	a := mustApp(t, nil)
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	const other id.DeviceID = "02:00:00:00:00:02"
+	wsA, wsB := connect(t, srv, mac), connect(t, srv, other)
+
+	a.onRelation(context.Background(), relation.Event{Kind: relation.Proposed, Friendship: relation.Friendship{ID: "f1", A: mac, B: other}})
+	for _, c := range []struct {
+		ws   *websocket.Conn
+		peer id.DeviceID
+	}{{wsA, other}, {wsB, mac}} {
+		if got := readText(t, c.ws); !strings.Contains(got, `"type":"friend.state"`) || !strings.Contains(got, `"event":"pending"`) || !strings.Contains(got, string(c.peer)) {
+			t.Fatalf("friend.state = %s", got)
+		}
+		if got := readText(t, c.ws); !strings.Contains(got, `"type":"haptic"`) {
+			t.Fatalf("haptic = %s", got)
+		}
+		if got := readText(t, c.ws); !strings.Contains(got, `"name":"friend"`) {
+			t.Fatalf("sound = %s", got)
+		}
+	}
+}
+
 func TestDispatch(t *testing.T) {
 	f := &fakeAI{calls: make(chan string, 16)}
-	srv := httptest.NewServer(newApp(f).Handler())
+	srv := httptest.NewServer(mustApp(t, f).Handler())
 	defer srv.Close()
 
 	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
@@ -77,7 +149,7 @@ func TestDispatch(t *testing.T) {
 }
 
 func TestWithoutLinxDevicesStillConnect(t *testing.T) {
-	srv := httptest.NewServer(newApp(nil).Handler())
+	srv := httptest.NewServer(mustApp(t, nil).Handler())
 	defer srv.Close()
 
 	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
@@ -97,7 +169,7 @@ func TestWithoutLinxDevicesStillConnect(t *testing.T) {
 
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
-	newApp(nil).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
+	mustApp(t, nil).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
 	if rec.Code != 200 || rec.Body.String() != "ok" {
 		t.Fatalf("healthz = %d %q", rec.Code, rec.Body.String())
 	}
