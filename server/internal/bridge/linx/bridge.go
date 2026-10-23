@@ -190,6 +190,8 @@ type link struct {
 	listening atomic.Bool
 	speaking  atomic.Bool
 	muted     atomic.Bool // Interrupt 之后到下一次 tts start 之间丢弃 TTS 音频
+	// platformErr 表示本次连接收到平台错误，之后的 TTS 都不播；重连后清除。
+	platformErr atomic.Bool
 
 	mu    sync.Mutex
 	ready chan struct{} // 连上时关闭；断线后换新的
@@ -426,6 +428,7 @@ func (l *link) disconnected() {
 	l.ready = make(chan struct{})
 	l.mu.Unlock()
 	l.muted.Store(false)
+	l.platformErr.Store(false)
 	if l.speaking.Swap(false) && l.dev.Context().Err() == nil {
 		l.stopSpeaking()
 	}
@@ -507,6 +510,15 @@ func (l *link) onLinxText(data []byte) {
 	}
 	switch m.Type {
 	case "stt":
+		if m.ErrorCode != 0 {
+			// 平台错误（如设备未绑定智能体）会以 stt 文本加一段 TTS 播报：那是给大人看的提示，
+			// 不播给孩子，改为向设备报错，并丢弃本会话后续的 TTS。
+			l.platformErr.Store(true)
+			l.muted.Store(true)
+			slog.Warn("linx session error", "device_id", l.dev.DeviceID(), "error_code", m.ErrorCode)
+			_ = l.dev.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "ai service unavailable"})
+			return
+		}
 		// 一句话识别完成，AI 开始思考。文本本身不转发给设备（设备没有屏幕）。
 		if m.Text != "" {
 			l.light("thinking")
@@ -514,6 +526,9 @@ func (l *link) onLinxText(data []byte) {
 	case "tts":
 		switch m.State {
 		case "start":
+			if l.platformErr.Load() {
+				return
+			}
 			l.muted.Store(false)
 			if l.speaking.Swap(true) {
 				return

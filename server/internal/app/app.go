@@ -13,8 +13,10 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
 	"github.com/LiusCraft/palpable/server/internal/channel"
 	"github.com/LiusCraft/palpable/server/internal/config"
+	"github.com/LiusCraft/palpable/server/internal/device"
 	"github.com/LiusCraft/palpable/server/internal/gateway"
 	"github.com/LiusCraft/palpable/server/internal/id"
+	"github.com/LiusCraft/palpable/server/internal/linxapi"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 	"github.com/LiusCraft/palpable/server/internal/relation"
 	"github.com/LiusCraft/palpable/server/internal/store"
@@ -40,13 +42,16 @@ func (noAI) Available(id.DeviceID) bool  { return false }
 func (noAI) Listen(id.DeviceID, bool)    {}
 
 type App struct {
-	store store.Store
-	ai    ai // 未配置灵矽时为 nil
-	rel   *relation.Relations
-	chans *channel.Channels
-	zones *zone.Zones
-	voice *voice.Router
-	gw    *gateway.Gateway
+	demo    config.Demo
+	store   store.Store
+	catalog *device.Catalog
+	devices *device.Devices
+	ai      ai // 未配置灵矽时为 nil
+	rel     *relation.Relations
+	chans   *channel.Channels
+	zones   *zone.Zones
+	voice   *voice.Router
+	gw      *gateway.Gateway
 }
 
 var _ gateway.Handler = (*App)(nil)
@@ -55,6 +60,8 @@ var _ gateway.Handler = (*App)(nil)
 type deps struct {
 	store store.Store
 	ai    ai
+	linx  linxapi.Client
+	demo  config.Demo
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -62,11 +69,14 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := deps{store: db}
+	d := deps{store: db, demo: cfg.Demo}
 	if cfg.Linx.Enabled() {
 		d.ai = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token})
+		d.linx = linxapi.New(cfg.Linx.APIBase, cfg.Linx.Token).WithOTA(cfg.Linx.OTAURL)
 		slog.Info("linx bridge enabled")
 	} else {
+		// 不接灵矽时设备档案在本地开通，频道对讲照常可用。
+		d.linx = linxapi.NewFake()
 		slog.Warn("linx.ws_url not set, AI conversation disabled")
 	}
 	a, err := newApp(ctx, d)
@@ -86,7 +96,12 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{store: d.store, ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park)}
+	if d.linx == nil {
+		d.linx = linxapi.NewFake()
+	}
+	catalog := device.NewCatalog(d.store.Styles(), d.linx)
+	a := &App{demo: d.demo, store: d.store, catalog: catalog, devices: device.New(d.store.Devices(), catalog, d.linx),
+		ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park)}
 	var aiPort voice.AI = noAI{}
 	if d.ai != nil {
 		aiPort = d.ai
@@ -105,8 +120,9 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	return a, nil
 }
 
-// Start 订阅领域事件并翻译成下行消息，直到 ctx 结束。
+// Start 确保灵矽侧的智能体，订阅领域事件并翻译成下行消息，直到 ctx 结束。
 func (a *App) Start(ctx context.Context) {
+	go a.ensureCatalog(ctx)
 	go a.relationEvents(ctx)
 	go a.channelEvents(ctx)
 	go a.zoneEvents(ctx)
@@ -151,19 +167,88 @@ func Run(ctx context.Context, cfg config.Config) error {
 	return nil
 }
 
+// OnConnect 在后台开通设备并接上 AI，不阻塞设备读循环。开通失败时设备仍可进频道对讲。
 func (a *App) OnConnect(s *gateway.Session) {
+	go a.connect(s)
+}
+
+func (a *App) connect(s *gateway.Session) {
+	ctx := s.Context()
+	d := s.DeviceID()
+	p, err := a.devices.Ensure(ctx, device.DeviceInfo{MAC: string(d), Skin: s.Skin(), Firmware: s.Firmware()})
+	if err != nil {
+		slog.Warn("provision device", "device_id", d, "error", err)
+		_ = s.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "provisioning failed"})
+		_ = s.Send(&protocol.Light{Type: protocol.TypeLight, State: "muted"})
+		return
+	}
+	p = a.applyDemo(ctx, p)
+	if p.Stage == device.StageNamed {
+		// 上次起好名字但交棒没完成：重试，不让孩子重新起名。
+		if hp, err := a.devices.Handoff(ctx, d); err != nil {
+			slog.Warn("retry handoff", "device_id", d, "error", err)
+		} else {
+			p = hp
+		}
+	}
 	if a.ai == nil {
 		return
 	}
-	if err := a.ai.Open(s.Context(), s, persona(s)); err != nil {
-		slog.Warn("open ai session", "device_id", s.DeviceID(), "error", err)
-		_ = s.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "ai service unavailable"})
+	if err := a.ai.Open(ctx, s, persona(p)); err != nil {
+		slog.Warn("open ai session", "device_id", d, "error", err)
+		return
+	}
+	if p.Stage == device.StageFresh {
+		if err := a.ai.Say(ctx, d, sayWelcome); err != nil {
+			slog.Warn("welcome", "device_id", d, "error", err)
+		}
 	}
 }
 
-// persona 在 device（S6）落地前没有档案可读：不指定智能体，
-// 由灵矽按平台上该 MAC 已有的绑定选择。S6 起改为 device.Ensure 的结果。
-func persona(*gateway.Session) linx.Persona { return linx.Persona{} }
+// applyDemo 演示环境里新设备自动绑定预置家长与同意标记；产品里由家长端完成。
+func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
+	if a.demo.Guardian == "" || p.Guardian != "" {
+		return p
+	}
+	g := id.GuardianID(a.demo.Guardian)
+	if err := a.devices.Bind(ctx, p.ID, g); err != nil {
+		slog.Warn("bind demo guardian", "device_id", p.ID, "error", err)
+		return p
+	}
+	p.Guardian = g
+	if a.demo.VoiceConsent {
+		if err := a.devices.SetVoiceConsent(ctx, p.ID, true); err == nil {
+			p.VoiceConsent = true
+		}
+	}
+	return p
+}
+
+// persona 把档案映射成 AI 会话参数；声音登记只在引导期且监护人同意时进行。
+func persona(p device.Profile) linx.Persona {
+	return linx.Persona{AgentID: p.AgentID, DollName: p.DollName, KidName: p.KidName,
+		VoiceStep: p.Stage == device.StageFresh && p.VoiceConsent}
+}
+
+// ensureCatalog 确保引导智能体与风格智能体在灵矽存在；失败时稍后重试，期间新设备开通会失败。
+func (a *App) ensureCatalog(ctx context.Context) {
+	if a.demo.Guardian != "" {
+		_ = a.store.Guardians().Put(ctx, store.Guardian{ID: id.GuardianID(a.demo.Guardian), DisplayName: a.demo.GuardianName})
+	}
+	for delay := 5 * time.Second; ; delay = min(delay*2, 5*time.Minute) {
+		err := a.catalog.EnsureAll(ctx)
+		if err == nil {
+			slog.Info("linx agents ready")
+			return
+		}
+		slog.Error("ensure linx agents", "error", err, "retry_in", delay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+}
 
 func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 	switch m := msg.(type) {
@@ -224,8 +309,14 @@ func (a *App) send(d id.DeviceID, msgs ...protocol.Message) {
 	}
 }
 
-// dollName 返回设备小伙伴的名字，供提示与展示；device（S6）落地前为空。
-func (a *App) dollName(context.Context, id.DeviceID) string { return "" }
+// dollName 返回设备小伙伴的名字，供提示与展示；还没起名时为空。
+func (a *App) dollName(ctx context.Context, d id.DeviceID) string {
+	p, err := a.devices.Profile(ctx, d)
+	if err != nil {
+		return ""
+	}
+	return p.DollName
+}
 
 func (a *App) relationEvents(ctx context.Context) {
 	for {
@@ -360,8 +451,11 @@ func (a *App) onZone(ctx context.Context, e zone.Event) {
 	}()
 }
 
-// ready 表示设备已完成起名与交棒；引导期间不打扰孩子问是否加入区域频道。device（S6）落地前视为已就绪。
-func (a *App) ready(context.Context, id.DeviceID) bool { return true }
+// ready 表示设备已完成起名与交棒；引导期间不打扰孩子问是否加入区域频道。
+func (a *App) ready(ctx context.Context, d id.DeviceID) bool {
+	p, err := a.devices.Profile(ctx, d)
+	return err == nil && p.Stage == device.StageReady
+}
 
 // Send 与 SendAudio 实现 voice.Sink：参与者现在都是设备，经 gateway 会话下发。
 func (a *App) Send(p id.ParticipantID, m protocol.Message) error {

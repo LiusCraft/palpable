@@ -365,6 +365,8 @@ type Devices interface {
     Handoff(ctx context.Context, d id.DeviceID) (Profile, error)         // 幂等：切到风格智能体，写记忆焦点，stage=ready
     EnrollVoice(ctx context.Context, d id.DeviceID) error                // 无监护人同意返回 ErrNoConsent
     Bind(ctx context.Context, d id.DeviceID, g id.GuardianID) error
+    SetVoiceConsent(ctx context.Context, d id.DeviceID, on bool) error  // 监护人对声纹登记的单独同意
+    Delete(ctx context.Context, d id.DeviceID) error                     // 同一事务删除好友、群成员与历史
     Subscribe() <-chan Event // Named
 }
 
@@ -408,7 +410,10 @@ type Profile struct {
 - 灵矽预注册对已存在的设备返回冲突时，按"已开通"处理并核对绑定的智能体。
 - 名字只接受小伙伴名与孩子的称呼，不存其他个人信息。
 - `SetNames` 在 `fresh` 时进入 `named`；`Handoff` 在 `named` 时进入 `ready`，已是 `ready` 直接返回。名字写入记忆焦点放在 `Handoff` 里，因为记忆容器属于风格智能体。
-- `EnrollVoice` 只在 `VoiceConsent` 为真时调用 linxapi 登记，失败不改变 `Stage`；`Profile` 只存 `SpeakerID`，不存音频与声纹特征。
+- `EnrollVoice` 只在 `VoiceConsent` 为真、且仍在引导期时调用 linxapi 登记，失败不改变 `Stage`；`Profile` 只存 `SpeakerID`，不存音频与声纹特征。样本必须明确标着本机 MAC、且在 10 分钟内，否则返回 `ErrNoSample`。
+- 开通 = 预注册到引导智能体 + 以设备身份访问一次 OTA 完成绑定；OTA 失败只记日志，不阻塞开通（可在灵矽控制台手动绑定）。
+- 名字 1 到 12 个字符；交棒时不迁移引导期聊天记录；记忆焦点写入失败只记日志，名字每次会话也会经 `agent_params` 注入。
+- 风格、提示词与音色在 `device/styles.go`：引导智能体"小可"不开长期记忆，四个风格对应 dragon / rabbit / bear / cat，未知皮套用 bear。所有提示词都带安全规则，禁止询问地址、学校、电话等个人信息。
 
 **依赖** store、linxapi、id。
 
