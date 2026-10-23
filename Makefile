@@ -1,4 +1,4 @@
-.PHONY: gen build test vet check dev-server dev-web
+.PHONY: gen build lint test vet check dev-server dev-web
 
 # 由 protocol/palpable.schema.json 生成前端协议类型
 gen:
@@ -8,6 +8,9 @@ build:
 	cd server && go build ./...
 	cd web && pnpm run build
 
+lint:
+	cd web && pnpm run lint
+
 test:
 	cd server && go test ./...
 
@@ -15,7 +18,7 @@ vet:
 	cd server && go vet ./...
 
 # 每次改动后的完整检查
-check: gen vet test build
+check: gen lint vet test build
 
 dev-server:
 	cd server && go run ./cmd/palpabled
