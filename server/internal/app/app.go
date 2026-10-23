@@ -28,6 +28,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/share"
 	"github.com/LiusCraft/palpable/server/internal/store"
 	"github.com/LiusCraft/palpable/server/internal/voice"
+	"github.com/LiusCraft/palpable/server/internal/world"
 	"github.com/LiusCraft/palpable/server/internal/zone"
 )
 
@@ -62,6 +63,7 @@ type App struct {
 	voice   *voice.Router
 	mcp     *mcp.Proxy
 	history *history.History
+	world   *world.World // 仅演示模式
 	gw      *gateway.Gateway
 
 	speaking sync.Map // id.DeviceID → bool：AI 是否正在说话，交棒前等它说完
@@ -144,6 +146,11 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		d.ai.OnMCP(a.mcp.OnLinxMCP)
 	}
 	a.gw = gateway.New(a, allowDevOrigin)
+	if d.demo.World {
+		if err := a.startWorld(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return a, nil
 }
 
@@ -164,6 +171,9 @@ func (a *App) Close() error { return a.store.Close() }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/ws", a.gw)
+	if a.world != nil {
+		mux.Handle("/world", a.world)
+	}
 	if a.demo.ParentToken != "" && a.demo.Guardian != "" {
 		online := func(d id.DeviceID) bool { _, ok := a.gw.Session(d); return ok }
 		mux.Handle("/api/", parentapi.New(parentapi.FixedToken(a.demo.ParentToken, id.GuardianID(a.demo.Guardian)),
@@ -202,6 +212,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 // OnConnect 在后台开通设备并接上 AI，不阻塞设备读循环。开通失败时设备仍可进频道对讲。
 func (a *App) OnConnect(s *gateway.Session) {
+	a.publish(world.Event{Kind: "device", Device: s.DeviceID(), Skin: s.Skin(), Online: world.Bool(true)})
 	go a.connect(s)
 }
 
@@ -216,6 +227,7 @@ func (a *App) connect(s *gateway.Session) {
 		return
 	}
 	p = a.applyDemo(ctx, p)
+	a.publish(world.Event{Kind: "device", Device: d, Name: p.DollName, Skin: p.Skin})
 	if p.Stage == device.StageNamed {
 		// 上次起好名字但交棒没完成：重试，不让孩子重新起名。
 		if hp, err := a.devices.Handoff(ctx, d); err != nil {
@@ -300,6 +312,7 @@ func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 	case *protocol.Mcp:
 		a.mcp.OnDeviceMCP(s.DeviceID(), m.Payload)
 	case *protocol.Location:
+		a.publish(world.Event{Kind: "pos", Device: s.DeviceID(), Pos: &world.LatLng{Lat: m.Lat, Lng: m.Lng}})
 		if err := a.zones.OnLocation(s.Context(), s.DeviceID(), m.Lat, m.Lng); err != nil {
 			slog.Warn("location", "device_id", s.DeviceID(), "error", err)
 		}
@@ -322,6 +335,7 @@ func (a *App) OnDisconnect(s *gateway.Session) {
 	// 区域频道成员只在线时有效；群成员身份保留。
 	_ = a.chans.LeaveZone(context.WithoutCancel(s.Context()), s.DeviceID())
 	a.zones.Forget(s.DeviceID())
+	a.publish(world.Event{Kind: "device", Device: s.DeviceID(), Online: world.Bool(false)})
 }
 
 // allowDevOrigin 开发期只放行本机前端；上线前改为配置白名单。
@@ -368,6 +382,8 @@ func (a *App) relationEvents(ctx context.Context) {
 
 func (a *App) onRelation(ctx context.Context, e relation.Event) {
 	f := e.Friendship
+	a.publish(world.Event{Kind: "friend", Device: f.A, Friend: &f.B, Status: map[relation.EventKind]string{
+		relation.Proposed: "pending", relation.Confirmed: "confirmed", relation.Removed: "removed"}[e.Kind]})
 	for _, d := range []id.DeviceID{f.A, f.B} {
 		other := f.Other(d)
 		state := &protocol.FriendState{Type: protocol.TypeFriendState, DeviceID: other, Name: a.dollName(ctx, other)}
@@ -424,6 +440,7 @@ func (a *App) onChannel(ctx context.Context, e channel.Event) {
 	state := &protocol.ChannelState{Type: protocol.TypeChannelState, Channel: string(ch.ID), Name: ch.Name, Color: channelColor(ch)}
 	switch e.Kind {
 	case channel.Joined:
+		a.publish(world.Event{Kind: "member", Device: d, Channel: ch.ID, Joined: world.Bool(true)})
 		state.Event = "joined"
 		a.send(d, state, &protocol.Sound{Type: protocol.TypeSound, Name: "joined"})
 		others := a.rel.FilterFriends(ctx, e.Participant, a.chans.Members(ch.ID))
@@ -435,6 +452,7 @@ func (a *App) onChannel(ctx context.Context, e channel.Event) {
 			a.recordMet(ctx, fd, d, string(ch.ID))
 		}
 	case channel.Left:
+		a.publish(world.Event{Kind: "member", Device: d, Channel: ch.ID, Joined: world.Bool(false)})
 		a.voice.OnLeave(d)
 		state.Event = "left"
 		a.send(d, state, &protocol.Sound{Type: protocol.TypeSound, Name: "left"})
@@ -525,11 +543,10 @@ func (a *App) voiceEvents(ctx context.Context) {
 	}
 }
 
-// onVoice 目前只记录元数据；world（S11）落地后转给地图。
+// onVoice 把谁在说话转给演示地图。
 func (a *App) onVoice(e voice.Event) {
-	if e.Kind == voice.BurstStarted {
-		slog.Debug("burst started", "channel", e.Burst.Channel, "speaker", e.Burst.Speaker, "listeners", len(e.Burst.Listeners))
-	}
+	a.publish(world.Event{Kind: "burst", Device: id.OwnerDevice(e.Burst.Speaker), Channel: e.Burst.Channel,
+		Speaking: world.Bool(e.Kind == voice.BurstStarted)})
 }
 
 func (a *App) toLinx(d id.DeviceID, payload json.RawMessage) error {
@@ -572,6 +589,7 @@ func (a *App) handoff(e device.Named) {
 	}
 	ctx := sess.Context()
 	a.waitAISilent(ctx, e.Device)
+	a.publish(world.Event{Kind: "device", Device: e.Device, Name: e.DollName})
 	p, err := a.devices.Handoff(ctx, e.Device)
 	if err != nil {
 		slog.Warn("handoff", "device_id", e.Device, "error", err)
@@ -614,5 +632,37 @@ func (a *App) recordMet(ctx context.Context, d, friend id.DeviceID, ch string) {
 	m := history.MetFriend{Friend: friend, Name: a.dollName(ctx, friend), Channel: ch}
 	if err := a.history.RecordMet(ctx, d, m); err != nil {
 		slog.Warn("record met friend", "device_id", d, "error", err)
+	}
+}
+
+// startWorld 开放演示地图：区域轮廓来自 zone，已有的好友关系先装进快照。
+func (a *App) startWorld(ctx context.Context) error {
+	var zones []world.Zone
+	for _, z := range a.zones.All() {
+		wz := world.Zone{ID: string(z.ID), Name: z.Name, Channel: string(z.Channel())}
+		for _, p := range z.Polygon {
+			wz.Polygon = append(wz.Polygon, world.LatLng{Lat: p.Lat, Lng: p.Lng})
+		}
+		zones = append(zones, wz)
+	}
+	a.world = world.New(zones, allowDevOrigin)
+	for _, st := range []relation.Status{relation.StatusPending, relation.StatusConfirmed} {
+		fs, err := a.store.Friendships().ListByStatus(ctx, int(st))
+		if err != nil {
+			return err
+		}
+		for _, f := range fs {
+			b := f.B
+			a.world.Publish(world.Event{Kind: "friend", Device: f.A, Friend: &b, Status: map[relation.Status]string{
+				relation.StatusPending: "pending", relation.StatusConfirmed: "confirmed"}[st]})
+		}
+	}
+	slog.Warn("demo world map enabled: /world exposes every device's position")
+	return nil
+}
+
+func (a *App) publish(e world.Event) {
+	if a.world != nil {
+		a.world.Publish(e)
 	}
 }

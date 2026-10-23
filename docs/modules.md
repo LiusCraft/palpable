@@ -94,20 +94,24 @@ func (s *Session) Context() context.Context         // 连接断开即取消
 
 **不负责** 任何业务判断；不属于设备协议。
 
-**接口** `GET /world` 升级为 WebSocket，推送：
+**接口** `GET /world` 升级为 WebSocket：连接时先推 `snapshot`（全部设备、好友关系、区域轮廓），之后推增量：
 ```go
-type WorldEvent struct {
-    Kind     string        // "device" | "burst" | "member"
+type Event struct {
+    Kind     string        // "snapshot" | "device" | "pos" | "member" | "burst" | "friend"
     Device   id.DeviceID
+    Name, Skin string
+    Online   *bool
     Pos      *LatLng
     Channel  id.ChannelID
-    Speaking bool
-    Friend   *id.DeviceID  // 与视角设备的好友关系，前端据此标注"已屏蔽"
+    Joined, Speaking *bool
+    Friend   *id.DeviceID  // 与 Device 的好友关系，Status 为 pending / confirmed / removed；前端据此标注"已屏蔽"
+    Status   string
+    Devices  []DeviceState; Friends []Friendship; Zones []Zone // 仅 snapshot
 }
-func (w *World) Publish(e WorldEvent) // 由 app 调用
+func (w *World) Publish(e Event) // 由 app 调用；慢观察者丢事件，不阻塞
 ```
 
-**规则** 它会暴露所有设备的位置，**只在演示模式注册路由**，默认启动不开启。
+**规则** 它会暴露所有设备的位置，**只在演示模式注册路由**（`demo.world: true`），默认启动不开启，访问 `/world` 返回 404。
 
 **依赖** id。
 

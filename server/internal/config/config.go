@@ -24,6 +24,7 @@ type Demo struct {
 	GuardianName string `yaml:"guardian_name"` // 家长显示名
 	VoiceConsent bool   `yaml:"voice_consent"` // 预置监护人对声纹登记的同意
 	ParentToken  string `yaml:"parent_token"`  // 家长端令牌，代表 Guardian；空则不开放 /api
+	World        bool   `yaml:"world"`         // 开放 /world 演示地图；会暴露所有设备位置，默认关闭
 }
 
 // Linx 是灵矽接入配置；WSURL 为空表示不启用 AI 对话。

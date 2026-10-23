@@ -8,6 +8,7 @@ demo:
   guardian_name: 朵朵妈妈
   voice_consent: false
   parent_token: palpable-demo   # 家长端（Web 手机窗口）用的令牌
+  world: true                   # 开放 /world 演示地图（会暴露所有设备位置，只在演示时打开）
 
 # 不填 ws_url 则不启用 AI 对话。
 linx:
