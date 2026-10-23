@@ -649,12 +649,12 @@ type Client interface {
 
 **数据结构**
 ```go
-type AgentSpec   struct { Name, AssistantName, SystemPrompt, MemoryModel string }
-type VoiceSample struct { AudioURL string; At time.Time }
-type Message     struct { Role, Text, AudioURL string; At time.Time }
+type AgentSpec   struct { Name, AssistantName, SystemPrompt, MemoryModel, VoiceID string }
+type VoiceSample struct { AudioURL, MAC string; At time.Time } // MAC 为空表示平台没给出样本来源
+type Message     struct { Role, Text, AudioURL, MAC string; At time.Time }
 ```
 
-**规则** HTTP 恒为 200，以响应体 `code` 判断；`401` 视为令牌失效；所有调用设超时并重试一次。令牌只来自 YAML 配置文件。
+**规则** HTTP 恒为 200，以响应体 `code` 判断；`401` 视为令牌失效；所有调用设超时，网络错误与 5xx 重试一次，业务错误不重试。令牌只来自 YAML 配置文件（`linx.token`，REST 地址 `linx.api_base`）。预注册对已存在的 MAC 返回 `ErrAlreadyRegistered`；建记忆容器遇到 614（已存在）时取现有容器；记忆焦点按名字查找，没有才创建。`Fake` 是内存实现，供上层模块测试。
 
 **依赖** 无。
 
