@@ -83,9 +83,46 @@ bridge/linx 以该 MAC 连灵矽 → 正常对话；stage=fresh 时进入开箱�
 type DeviceID string  // 与 hello.device_id 一致
 type ChannelID string // "zone:park"、"group:7326"
 type GuardianID string
+
+// 频道里的"参与者"。现在只有设备；将来设备专属的小伙伴智能体也可以作为参与者加入。
+type ParticipantID string // "dev:<mac>"；预留 "agt:<mac>"
+func (p ParticipantID) Kind() Kind     // KindDevice | KindAgent（预留）
+func OwnerDevice(p ParticipantID) DeviceID // 参与者归属哪台设备，好友判断与家长控制都以它为准
 ```
 
 全局约定：接口方法首参为 `context.Context`；热路径（音频帧）不加长锁、不打日志、不阻塞；错误带上下文返回，不吞。
+
+---
+
+## 预留：小伙伴智能体作为频道成员（暂不做）
+
+将来每台设备的专属小伙伴可以**作为一个实体加入频道**，听大家说话、也参与对话。现在不做，但模块边界要为它留好接缝。
+
+**怎么看智能体与频道的关系：** 智能体不是频道的一部分，而是和设备平级的**参与者**。频道只管"有哪些参与者"，不关心对方是孩子的设备还是小伙伴。
+
+| 现在 | 将来加入智能体时 |
+| --- | --- |
+| 参与者只有设备：`dev:<mac>` | 多一种 `agt:<mac>`，由同一台设备的小伙伴扮演 |
+| 听者收到的是设备的 Opus 帧，下发给设备 | 智能体听者收到同样的帧，喂给它的灵矽会话（ASR） |
+| 发言人是设备，说话靠 `mic.state` | 智能体发言人是 TTS 音频，同样要先抢发言权 |
+| `AreFriends(a, b)` 看设备 | 智能体按所属设备判断：`OwnerDevice(p)` |
+
+**现在就要做对的五个接缝**
+
+1. **频道成员用 `ParticipantID`，不用 `DeviceID`。** `channel.Members`、`voice.Burst` 的发言人与听者都是参与者。现在只有 `KindDevice`，改动成本最低。
+2. **voice 面向 `Sink` 而不是 gateway 的会话。** 给参与者发消息与音频只走 `Sink`；设备的实现是 gateway 会话，将来智能体的实现是它的灵矽会话。voice 不知道对方是谁。
+3. **好友关系经 `OwnerDevice` 解析。** `relation.AreFriends` 接受参与者，智能体视同它所属的设备，家长控制与屏蔽自动适用。
+4. **灵矽会话的音频输入可替换。** `bridge/linx` 的会话把"喂给灵矽的音频来源"抽象成一个输入：现在只有"所属设备的麦克风"，将来可以是"频道里的发言"。灵矽的会话和身份不变，不会因为多开会话和同一个 MAC 冲突。
+5. **发言权天然给智能体提供了干净输入。** 同一频道同一时刻只有一个人说话，所以智能体的 ASR 拿到的是一句一句串行的话，不会有混音。
+
+**将来才需要新增的东西（现在不做）**
+
+- 智能体何时开口的策略（被点名、停顿后、被问到）：`Policy.ShouldSpeak(ctx, agent, utterance) bool`，接口现在不写。
+- 告诉智能体"是谁说的"：把发言人的名字随音频带给它。
+- 协议：`speaker.state` 增加可选的 `from_kind`，设备据此用不同灯色表示"这是某个小伙伴在说话"。
+- 隐私与家长控制：智能体听到什么、说了什么都要进历史，家长可关闭；这条必须在上线前定。
+
+**不会变的**：设备协议、`gateway`、`relation` 的状态机、`zone`、家长端接口。
 
 ---
 
@@ -164,7 +201,7 @@ type Session struct { id string; deviceID DeviceID; capabilities []string; ctx c
 2. **发言权**：同一频道同一时刻只有一个人在说话（对讲机式）。
 3. **下行转发**：把发言人的 Opus 帧原样转给同频道、且是好友的设备；管理一台设备同时只收一种来源的音频（AI 或好友）。
 
-**不负责** 谁是好友（relation）、谁在频道（channel）、AI 如何回答（bridge/linx）；不解码、不混音、不转码，只透传 Opus。
+**不负责** 谁是好友（relation）、谁在频道（channel）、AI 如何回答（bridge/linx）；不解码、不混音、不转码，只透传 Opus。发言人与听者都是**参与者**（`ParticipantID`），现在只有设备，将来可以有智能体，见"预留"一节。
 
 **路由规则**
 
@@ -201,10 +238,11 @@ type Router interface {
 }
 
 // voice 依赖的外部能力，由对应模块实现
-type Membership interface { ForegroundOf(d DeviceID) (ChannelID, bool); Members(ch ChannelID) []DeviceID }
-type Friends    interface { AreFriends(ctx context.Context, a, b DeviceID) (bool, error) }
+type Membership interface { ForegroundOf(p ParticipantID) (ChannelID, bool); Members(ch ChannelID) []ParticipantID }
+type Friends    interface { AreFriends(ctx context.Context, a, b ParticipantID) (bool, error) }
 type AI         interface { Forward(d DeviceID, frame []byte); Interrupt(d DeviceID) }
-type Sink       interface { Send(d DeviceID, m protocol.Message) error; SendAudio(d DeviceID, f []byte) error }
+type Sink       interface { Send(p ParticipantID, m protocol.Message) error; SendAudio(p ParticipantID, f []byte) error }
+// Sink 的实现：设备 = gateway 会话；将来的智能体 = 它的灵矽会话。voice 不关心对方是谁。
 ```
 
 **数据结构**
@@ -221,8 +259,8 @@ type deviceVoice struct {
 
 type Burst struct {
     Channel     ChannelID
-    Speaker     DeviceID
-    Listeners   []DeviceID
+    Speaker     ParticipantID
+    Listeners   []ParticipantID
     StartedAt   time.Time
     LastFrameAt time.Time
     FirstOutAt  time.Time   // 首帧发出时间，用于延迟统计
@@ -251,8 +289,8 @@ type Channels interface {
     Switch(ctx, d DeviceID, target string) error             // 群名、"下一个"、"上一个"
     Leave(ctx, d DeviceID, ch ChannelID) error
     Current(ctx, d DeviceID) (ChannelInfo, error)
-    ForegroundOf(d DeviceID) (ChannelID, bool)               // voice 使用，热路径
-    Members(ch ChannelID) []DeviceID                         // voice 使用，热路径
+    ForegroundOf(p ParticipantID) (ChannelID, bool)          // voice 使用，热路径
+    Members(ch ChannelID) []ParticipantID                    // voice 使用，热路径
     Subscribe() <-chan Event                                 // Joined / Left / Switched
 }
 ```
@@ -273,10 +311,11 @@ type Channel struct {
 type GroupTTL int // TTLTrip | TTLToday | TTLForever
 
 type ChannelInfo struct { Channel Channel; Members []MemberInfo; Foreground bool }
-type MemberInfo  struct { Device DeviceID; Name string; Friend bool } // Friend 相对于查询者
+type MemberInfo  struct { Who ParticipantID; Kind Kind; Name string; Friend bool } // Friend 相对于查询者
 ```
 
 **规则**
+- 成员是**参与者**（`ParticipantID`）。设备加入频道时，加入的是 `dev:<mac>`；将来智能体加入时是 `agt:<mac>`，频道逻辑不变。
 - 一台设备可以加入多个频道，**前台只有一个**；说话和收听都只针对前台频道，后台频道只收到 `presence`。
 - 4 位码在有效期内唯一；过期后失效；同一设备 1 分钟内错码超过 5 次则暂时拒绝。
 - 区域频道成员关系只在内存，群与码持久化到 store。
@@ -295,7 +334,7 @@ type MemberInfo  struct { Device DeviceID; Name string; Friend bool } // Friend 
 **接口**
 ```go
 type Relations interface {
-    AreFriends(ctx, a, b DeviceID) (bool, error)             // 热路径，内存缓存
+    AreFriends(ctx, a, b ParticipantID) (bool, error)        // 热路径，内存缓存；智能体按 OwnerDevice 解析为所属设备
     Friends(ctx, d DeviceID) ([]Friend, error)
     OnProximity(ctx, d DeviceID, peers []Peer) error         // 来自设备的 proximity 上报
     Confirm(ctx, reqID string, by GuardianID) error
@@ -382,6 +421,8 @@ type AIState int // AIIdle | AISpeaking
 **现状（M1 已有）** 握手头（`Protocol-Version`、UUID、`X-Agent-ID`）、`realtime`、`audio.downlink`、灯光映射。
 
 **待做** `Forward/Interrupt/Say` 对外接口（现在由 `OnAudio` 直接转发，需改为由 voice 调用）；**只在 `device.Ensure` 成功后才拨号**，`Device-Id` 直接用设备自己的 MAC（现在的 `PseudoMAC` 要删除）；`hello.agent_params` 注入孩子与小伙伴的名字；重连。
+
+**预留** 灵矽会话的"上行音频来源"要能替换：现在只有所属设备的麦克风，将来智能体入频道时可以是频道里的发言。会话与身份不变（同一个 MAC、同一条连接），只换输入。
 
 **依赖** gateway。
 
@@ -660,3 +701,4 @@ type WorldEvent struct {
 | 下行 | `friend.state` | `event`（pending/confirmed/removed） `device_id` `name` | 贴近成为好友的震动与提示 |
 | 双向 | `mcp` | `payload`（JSON-RPC） | 设备端 MCP，由 bridge/mcp 处理 |
 | 下行 | `sound` | `name` 增加 `busy` | 占线提示 |
+| 下行 | `speaker.state` | 预留可选 `from_kind`（device / agent） | 将来智能体入频道时，区分"小伙伴在说话"；现在不加 |
