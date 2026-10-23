@@ -12,22 +12,29 @@ import (
 	"time"
 
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
+	"github.com/LiusCraft/palpable/server/internal/config"
 	"github.com/LiusCraft/palpable/server/internal/gateway"
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	configPath := flag.String("config", "config.yaml", "path to YAML config file")
 	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		slog.Error("load config", "error", err)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var handler gateway.Handler
-	if cfg, ok := linx.ConfigFromEnv(); ok {
-		handler = linx.New(cfg)
+	if cfg.Linx.Enabled() {
+		handler = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token, AgentID: cfg.Linx.AgentID})
 		slog.Info("linx bridge enabled")
 	} else {
-		slog.Warn("LINX_WS_URL not set, AI conversation disabled")
+		slog.Warn("linx.ws_url not set, AI conversation disabled")
 	}
 	gw := gateway.New(handler, allowDevOrigin)
 
@@ -38,7 +45,7 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: cfg.Addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -46,7 +53,7 @@ func main() {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	slog.Info("palpabled starting", "addr", *addr)
+	slog.Info("palpabled starting", "addr", cfg.Addr)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)

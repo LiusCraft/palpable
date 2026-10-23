@@ -270,7 +270,7 @@ func (b *Bridge) OnMCP(fn func(d id.DeviceID, payload json.RawMessage))    // �
 
 **数据结构**
 ```go
-type Config struct { URL, Token string } // 来自环境变量；智能体 ID 取自设备档案
+type Config struct { URL, Token string } // 来自 YAML 配置；智能体 ID 取自设备档案
 type link struct {
     dev   DeviceLink
     ws    *websocket.Conn
@@ -619,7 +619,7 @@ type VoiceSample struct { AudioURL string; At time.Time }
 type Message     struct { Role, Text, AudioURL string; At time.Time }
 ```
 
-**规则** HTTP 恒为 200，以响应体 `code` 判断；`401` 视为令牌失效；所有调用设超时并重试一次。令牌只来自环境变量。
+**规则** HTTP 恒为 200，以响应体 `code` 判断；`401` 视为令牌失效；所有调用设超时并重试一次。令牌只来自 YAML 配置文件。
 
 **依赖** 无。
 

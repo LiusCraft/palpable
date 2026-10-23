@@ -1,0 +1,9 @@
+# 复制为 config.yaml 后按需修改；config.yaml 含密钥，已被 .gitignore 忽略。
+addr: ":8080"
+
+# 不填 ws_url 则不启用 AI 对话。
+linx:
+  ws_url: wss://xrobo-io.qiniuapi.com/v1/ws/
+  token: ""
+  agent_id: ""          # 可选，经 X-Agent-ID 指定智能体
+  voiceprint_base: ""   # 声纹服务地址（演示环境）

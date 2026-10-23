@@ -8,7 +8,7 @@ Web 模拟器与未来固件是**同一个协议的两个客户端**。所有业
 
 - 新增设备行为时，先改 `protocol/`，再改服务端，最后改 Web 模拟器。禁止 Web 端私自约定协议外的消息。
 - Web 模拟器里禁止直接读取其他"设备"的状态，所有跨设备信息必须来自服务端下行消息。
-- 灵矽（xrobotd/linxd）的 token、API Key 只允许存在服务端环境变量，MUST NOT 出现在 `web/` 或提交到仓库。
+- 灵矽（xrobotd/linxd）的 token、API Key 只允许存在服务端配置文件（`server/config.yaml`，不入库），MUST NOT 出现在 `web/` 或提交到仓库。
 
 ## 技术栈
 
@@ -25,7 +25,7 @@ Web 模拟器与未来固件是**同一个协议的两个客户端**。所有业
 palpable/
 ├── protocol/          设备协议 schema 与文档（单一事实来源）
 ├── server/            Go 后端（架构见 docs/architecture.md，模块规格见 docs/modules.md）
-│   ├── cmd/palpabled/ 入口，只读配置并调用 app 组装
+│   ├── cmd/palpabled/ 入口，只读配置（YAML，`internal/config`）并调用 app 组装
 │   └── internal/      接入：gateway / parentapi / world；编排：app；能力：voice / bridge；
 │                      领域：device / relation / channel / zone / history / share；基础：store / linxapi / protocol / id
 ├── web/               前端
@@ -37,7 +37,7 @@ palpable/
 ## 编码规则
 
 通用
-- 提交信息用中文或英文均可，一次提交只做一件事；不得提交 `.env`、密钥、声纹原始音频。
+- 提交信息用中文或英文均可，一次提交只做一件事；不得提交 `config.yaml`、`.env`、密钥、声纹原始音频。
 - 注释只写"为什么"，不复述代码。命名跟随所在目录的现有风格。
 - 每个模块对外只暴露接口；跨模块调用走接口，不直接读对方内部状态。
 - 依赖只能向下（接入 → 编排 → 能力 → 领域 → 基础）；下层需要上层能力时声明端口接口，由 `app` 注入。领域层只发事件，不发设备消息。
@@ -65,4 +65,4 @@ TypeScript / React
 ## 演示约束
 
 - 演示只含"开箱 → 命名认主 → 公园区域频道 → 贴近成为好友 → 好友互相听见"这条主线，其余功能留在路线图。
-- 演示环境的灵矽账号与地址通过环境变量注入：`LINX_WS_URL`、`LINX_TOKEN`、`LINX_VOICEPRINT_BASE`。
+- 演示环境的灵矽账号与地址通过服务端配置文件注入：`linx.ws_url`、`linx.token`、`linx.voiceprint_base`。

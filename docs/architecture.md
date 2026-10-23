@@ -193,7 +193,7 @@ Web 模拟器与固件各自实现下面七项，其余全在服务端。
 | 非好友不出现在在线列表 | `app` 下发 `presence`、`channel.state` 成员前经 `relation.FilterFriends` 过滤 | S4 验收 |
 | 好友需确认才生效 | `relation` 状态机保留 `Pending`；只有 `Confirm` 能转为好友 | S3 验收 |
 | 家长只看自家孩子 | `parentapi` 每个接口校验孩子归属 | S10 验收 |
-| 灵矽令牌不出服务端 | 只由 `linxapi`、`bridge/linx` 从环境变量读取 | 代码审查：`web/` 中无令牌 |
+| 灵矽令牌不出服务端 | 只由 `linxapi`、`bridge/linx` 从 YAML 配置文件（`internal/config`）读取 | 代码审查：`web/` 中无令牌 |
 | 演示地图不泄露位置 | `/world` 只在演示模式注册 | 默认启动时访问 `/world` 返回 404 |
 | 提示词与文案儿童友好 | 风格提示词在 `style` 配置；设备文案走 `ui` 统一文案表 | W7 验收 |
 | 声纹与原始音频不入库 | `store` 无对应表；声纹只存在灵矽 | 代码审查 |
@@ -202,7 +202,7 @@ Web 模拟器与固件各自实现下面七项，其余全在服务端。
 
 - **后端：** 一个 Go 进程 `palpabled`。路由：`/ws`（设备）、`/api`（家长端）、`/world`（演示模式）、`/healthz`。`main.go` 只读配置并调用 `app` 组装。
 - **前端：** Vite 构建的静态页面，开发期把 `/ws`、`/api`、`/world` 代理到后端。
-- **外部依赖：** 灵矽（地址与令牌来自 `LINX_WS_URL`、`LINX_TOKEN`、`LINX_VOICEPRINT_BASE`）；SQLite 文件。
+- **外部依赖：** 灵矽（地址与令牌来自配置文件的 `linx.ws_url`、`linx.token`、`linx.voiceprint_base`）；SQLite 文件。
 - **多设备演示：** 同一页面可开多个"小朋友窗口"，每个是独立的虚拟设备；也可多个浏览器分别接入。
 
 ## 10. 演示主线走过的模块
