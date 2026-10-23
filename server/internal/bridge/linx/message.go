@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
 )
 
 // welcome 是灵矽对 hello 的回复。
@@ -60,14 +59,4 @@ func parseLinx(data []byte) (linxMsg, error) {
 		return m, fmt.Errorf("parse linx message: %w", err)
 	}
 	return m, nil
-}
-
-// ConfigFromEnv 读取 LINX_WS_URL、LINX_TOKEN、可选的 LINX_AGENT_ID；URL 为空表示未配置灵矽。
-func ConfigFromEnv() (Config, bool) {
-	cfg := Config{
-		URL:     os.Getenv("LINX_WS_URL"),
-		Token:   os.Getenv("LINX_TOKEN"),
-		AgentID: os.Getenv("LINX_AGENT_ID"),
-	}
-	return cfg, cfg.URL != ""
 }

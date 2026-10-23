@@ -26,7 +26,7 @@ const (
 	readLimit    = 1 << 20
 )
 
-// Config 来自环境变量，见 ConfigFromEnv。
+// Config 由 app 从 config.Linx 映射而来。
 type Config struct {
 	URL     string // 例如 wss://xrobo-io.qiniuapi.com/v1/ws/
 	Token   string // Bearer 令牌

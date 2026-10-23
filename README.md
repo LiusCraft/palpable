@@ -87,14 +87,17 @@ Windows 没有 `make` 时，请在 `web`、`server` 目录分别执行 Makefile 
 
 ## 配置
 
-AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端环境变量**，禁止出现在 `web/` 或提交到仓库。
+AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端 YAML 配置文件**（`server/config.yaml`，已被 `.gitignore` 忽略），禁止出现在 `web/` 或提交到仓库。
 
-| 变量 | 说明 |
+复制 `server/config.example.yaml` 为 `server/config.yaml` 后修改；也可用 `palpabled -config <path>` 指定路径。文件不存在时用默认值启动（不启用 AI 对话）。
+
+| 键 | 说明 |
 | --- | --- |
-| `LINX_WS_URL` | 灵矽 WebSocket 地址，例如 `wss://xrobo-io.qiniuapi.com/v1/ws/` |
-| `LINX_TOKEN` | Bearer 令牌 |
-| `LINX_AGENT_ID` | 可选，经 `X-Agent-ID` 指定智能体 |
-| `LINX_VOICEPRINT_BASE` | 声纹服务地址（演示环境） |
+| `addr` | 监听地址，默认 `:8080` |
+| `linx.ws_url` | 灵矽 WebSocket 地址，例如 `wss://xrobo-io.qiniuapi.com/v1/ws/`；为空则不启用 AI 对话 |
+| `linx.token` | Bearer 令牌 |
+| `linx.agent_id` | 可选，经 `X-Agent-ID` 指定智能体 |
+| `linx.voiceprint_base` | 声纹服务地址（演示环境） |
 
 注意：灵矽的 `Device-Id` 必须是 MAC 形式。服务端由设备 ID 稳定生成伪 MAC（日志字段 `linx_mac`），需先在灵矽侧预注册并关联智能体，否则握手会被拒绝。
 
