@@ -39,3 +39,6 @@ server/config.yaml
 server/*.db
 server/*.db-shm
 server/*.db-wal
+
+# Playwright 本地产物
+.playwright-mcp/

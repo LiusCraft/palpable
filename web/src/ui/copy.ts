@@ -6,10 +6,10 @@ export const copy = {
 
   steps: [
     { key: 'unbox', title: '开箱', sub: '包装盒打开，取出玩偶放到桌面。', web: true },
-    { key: 'name', title: '命名认主', sub: '设备第一次上线，向小朋友问好，请他起名；之后可以一对一聊天。' },
-    { key: 'park', title: '公园区域频道', sub: '场景切换到公园，询问是否加入区域频道。' },
-    { key: 'friend', title: '贴近成为好友', sub: '两个玩偶靠近，通过震动和提示音确认，建立好友关系。' },
-    { key: 'talk', title: '好友互相听见', sub: '好友说话，对方设备播放；好友进入频道时收到提醒。' },
+    { key: 'name', title: '命名认主', sub: '设备第一次上线，向小朋友问好，请他起名；之后可以一对一聊天。', web: false },
+    { key: 'park', title: '公园区域频道', sub: '场景切换到公园，询问是否加入区域频道。', web: false },
+    { key: 'friend', title: '贴近成为好友', sub: '两个玩偶靠近，通过震动和提示音确认，建立好友关系。', web: false },
+    { key: 'talk', title: '好友互相听见', sub: '好友说话，对方设备播放；好友进入频道时收到提醒。', web: false },
   ],
 
   link: { offline: '未连接', connecting: '连接中…', online: '已上线' } as const,
