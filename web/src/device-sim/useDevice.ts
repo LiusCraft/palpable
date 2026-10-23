@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Hello, LightState, PalpableMessage } from '../shared/protocol.gen'
+import { audioSupported, MicCapture, Player } from './audio'
 
 export type Link = 'offline' | 'connecting' | 'online'
 
@@ -9,12 +10,17 @@ interface DeviceState {
   sessionId: string | null
   light: LightState
   lastError: string | null
+  micOn: boolean
+  speaking: boolean
   connect: (deviceId: string) => void
   disconnect: () => void
   wake: () => void
+  setMic: (on: boolean) => Promise<void>
 }
 
 let socket: WebSocket | null = null
+const mic = new MicCapture()
+const player = new Player()
 
 const hello = (deviceId: string): Hello => ({
   type: 'hello',
@@ -31,6 +37,8 @@ export const useDevice = create<DeviceState>((set, get) => ({
   sessionId: null,
   light: 'idle',
   lastError: null,
+  micOn: false,
+  speaking: false,
 
   connect: (deviceId) => {
     if (socket) return
@@ -42,7 +50,10 @@ export const useDevice = create<DeviceState>((set, get) => ({
 
     ws.onopen = () => ws.send(JSON.stringify(hello(deviceId)))
     ws.onmessage = (ev) => {
-      if (typeof ev.data !== 'string') return // 音频帧：M1 处理
+      if (typeof ev.data !== 'string') {
+        player.push(ev.data as ArrayBuffer)
+        return
+      }
       const msg = JSON.parse(ev.data) as PalpableMessage
       switch (msg.type) {
         case 'hello.ack':
@@ -51,6 +62,10 @@ export const useDevice = create<DeviceState>((set, get) => ({
         case 'light':
           set({ light: msg.state })
           break
+        case 'speaker.state':
+          set({ speaking: msg.state === 'start' })
+          if (msg.state === 'stop') player.reset()
+          break
         case 'error':
           set({ lastError: `${msg.code}: ${msg.message}` })
           break
@@ -58,7 +73,9 @@ export const useDevice = create<DeviceState>((set, get) => ({
     }
     ws.onclose = () => {
       socket = null
-      set({ link: 'offline', sessionId: null, light: 'idle' })
+      mic.stop()
+      player.reset()
+      set({ link: 'offline', sessionId: null, light: 'idle', micOn: false, speaking: false })
     }
   },
 
@@ -67,5 +84,30 @@ export const useDevice = create<DeviceState>((set, get) => ({
   wake: () => {
     if (get().link !== 'online') return
     socket?.send(JSON.stringify({ type: 'wake', source: 'touch' }))
+    void get().setMic(true)
+  },
+
+  setMic: async (on) => {
+    if (get().link !== 'online' || get().micOn === on) return
+    if (!on) {
+      mic.stop()
+      socket?.send(JSON.stringify({ type: 'mic.state', state: 'stop' }))
+      set({ micOn: false })
+      return
+    }
+    if (!audioSupported()) {
+      set({ lastError: '当前浏览器不支持 WebCodecs，请使用 Chrome / Edge' })
+      return
+    }
+    try {
+      await mic.start((frame) => {
+        if (socket?.readyState === WebSocket.OPEN) socket.send(frame)
+      })
+    } catch (e) {
+      set({ lastError: `无法打开麦克风：${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    socket?.send(JSON.stringify({ type: 'mic.state', state: 'start' }))
+    set({ micOn: true })
   },
 }))

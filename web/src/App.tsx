@@ -6,7 +6,7 @@ import { Plush } from './plush/Plush'
 const LINK_TEXT = { offline: '未连接', connecting: '连接中…', online: '已上线' } as const
 
 export default function App() {
-  const { link, light, lastError, sessionId, connect, disconnect, wake } = useDevice()
+  const { link, light, lastError, sessionId, micOn, connect, disconnect, wake, setMic } = useDevice()
   const deviceId = new URLSearchParams(location.search).get('device') ?? 'plush-001'
 
   return (
@@ -29,6 +29,14 @@ export default function App() {
         >
           {link === 'offline' ? '连接网关' : '断开'}
         </button>
+        {link === 'online' && (
+          <button
+            className="ml-2 mt-2 rounded-full bg-pink-500 px-4 py-1 text-white"
+            onClick={() => void setMic(!micOn)}
+          >
+            {micOn ? '停止说话' : '开始说话'}
+          </button>
+        )}
       </div>
     </div>
   )

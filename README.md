@@ -5,6 +5,8 @@
 ## 开发
 
 - 后端：`cd server && go run ./cmd/palpabled`（默认 `:8080`，设备端点 `/ws`，健康检查 `/healthz`）
+- 接入灵矽（不设置则只做握手，没有 AI 对话）：`LINX_WS_URL=wss://<host>/xiaozhi/v1/`，`LINX_TOKEN=<Bearer 令牌>`。令牌只放服务端环境变量。
+- 浏览器音频依赖 WebCodecs，请用 Chrome / Edge；麦克风需要 `localhost` 或 HTTPS。
 - 前端：`cd web && pnpm install && pnpm dev`（`/ws` 自动代理到本地网关）
 - 协议类型生成：`cd web && pnpm run gen:protocol`
 - 全量检查：`make check`（Windows 没有 make 时，依次执行：`pnpm run gen:protocol`、`go vet ./...`、`go test ./...`、`pnpm run build`）

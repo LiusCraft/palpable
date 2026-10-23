@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
 	"github.com/LiusCraft/palpable/server/internal/gateway"
 )
 
@@ -21,7 +22,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	gw := gateway.New(nil, allowDevOrigin)
+	var handler gateway.Handler
+	if cfg, ok := linx.ConfigFromEnv(); ok {
+		handler = linx.New(cfg)
+		slog.Info("linx bridge enabled")
+	} else {
+		slog.Warn("LINX_WS_URL not set, AI conversation disabled")
+	}
+	gw := gateway.New(handler, allowDevOrigin)
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", gw)
