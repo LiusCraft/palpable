@@ -121,7 +121,7 @@ AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端
 | `demo.guardian` / `demo.guardian_name` | 演示：新设备自动绑定到这个家长 |
 | `demo.voice_consent` | 演示：预置监护人对声纹登记的同意 |
 
-设备以自己的 MAC 作为 `Device-Id` 连灵矽（Web 模拟器首次打开时生成并存在浏览器里，`?device=<mac>` 可指定）。服务端启动时自动在灵矽创建"可感·小可"等五个智能体；新设备上线时自动预注册并经 OTA 激活。若 OTA 不可达（日志 `activate device via ota`），在灵矽控制台把该 MAC 绑定到"可感·小可"即可。
+设备以自己的 MAC 作为 `Device-Id` 连灵矽（Web 模拟器首次打开时生成并存在浏览器里，`?device=<mac>` 可指定）。服务端启动时自动在灵矽创建"可感·小可"等五个智能体；新设备上线时自动预注册并经 OTA 激活，随即可以对话。若 OTA 不可达（日志 `activate device via ota`），在灵矽控制台把该 MAC 绑定到"可感·小可"即可。
 
 ## 架构
 
