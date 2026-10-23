@@ -3,12 +3,15 @@ import { useStore } from 'zustand'
 import type { VirtualDevice } from './device-sim/device'
 import { useDevices } from './device-sim/devices'
 import { connectWorld, useWorld } from './map/world'
+import { ParentPanel } from './parent-sim/ParentPanel'
 import { useDemo, type Scene } from './scenes/demo'
+import { Extras } from './scenes/extras/Extras'
+import { Skins } from './scenes/extras/Skins'
 import { Desk } from './scenes/desk/Desk'
 import { ParkStage } from './scenes/park/ParkStage'
 import { Unbox } from './scenes/unbox/Unbox'
 import { copy } from './ui/copy'
-import { Button, Card, StepHeader } from './ui/components'
+import { Button, Card, StepBadge, StepHeader } from './ui/components'
 
 const SCENE_OF_STEP: Scene[] = ['unbox', 'desk', 'park', 'park', 'park']
 
@@ -33,6 +36,22 @@ export default function App() {
         {device && scene === 'desk' && <Desk device={device} onPark={() => setScene('park')} />}
         {scene === 'park' && <ParkStage />}
       </Card>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <Card>
+          <SectionTitle n={6} title={copy.extras.title} tag="示例" sub={copy.extras.sub} />
+          {device && <Extras device={device} />}
+        </Card>
+        <Card>
+          <SectionTitle n={8} title={copy.skins.title} sub={copy.skins.sub} />
+          {device && <Skins device={device} />}
+        </Card>
+      </div>
+
+      <Card className="mt-4">
+        <SectionTitle n={7} title={copy.parent.title} tag="Web 模拟" sub="家长查看好友、群聊、今日回顾，进行家长控制。好友请求要在这里确认才生效。" />
+        <ParentPanel />
+      </Card>
     </div>
   )
 }
@@ -44,6 +63,21 @@ function useParkStep(device?: VirtualDevice): number {
   if (Object.keys(s.present).length > 0) return 4
   if (Object.values(s.friends).some((f) => f.status === 'confirmed')) return 3
   return 2
+}
+
+function SectionTitle({ n, title, sub, tag }: { n: number; title: string; sub: string; tag?: string }) {
+  return (
+    <header className="mb-3 flex items-start gap-3">
+      <StepBadge n={n} />
+      <div>
+        <h2 className="text-xl font-bold text-[#1d3557]">
+          {title}
+          {tag && <span className="ml-1 text-base font-medium text-slate-500">（{tag}）</span>}
+        </h2>
+        <p className="mt-0.5 text-sm text-slate-500">{sub}</p>
+      </div>
+    </header>
+  )
 }
 
 function UnboxStage({ device, onDone }: { device: VirtualDevice; onDone: () => void }) {

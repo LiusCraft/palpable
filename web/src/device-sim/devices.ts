@@ -38,6 +38,7 @@ interface DevicesState {
   add: (skin: string) => VirtualDevice
   remove: (mac: MAC) => void
   setActive: (mac: MAC) => void
+  changeSkin: (mac: MAC, skin: string) => void
 }
 
 // ?device=<mac> 指定时只开这一只，便于多个浏览器窗口各扮一个小朋友。
@@ -62,6 +63,10 @@ export const useDevices = create<DevicesState>((set, get) => ({
     if (!fromURL) save(devices)
   },
   setActive: (mac) => set({ active: mac }),
+  changeSkin: (mac, skin) => {
+    get().devices.find((d) => d.mac === mac)?.setSkin(skin)
+    if (!fromURL) save(get().devices)
+  },
 }))
 
 const mic = new MicCapture()
