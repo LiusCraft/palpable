@@ -14,6 +14,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/relation"
 	"github.com/LiusCraft/palpable/server/internal/store"
+	"github.com/LiusCraft/palpable/server/internal/zone"
 )
 
 const mac id.DeviceID = "02:00:00:00:00:01"
@@ -32,6 +33,10 @@ func (f *fakeAI) Forward(d id.DeviceID, frame []byte) {
 	f.calls <- fmt.Sprintf("forward %s %d", d, len(frame))
 }
 func (f *fakeAI) Listen(d id.DeviceID, on bool) { f.calls <- fmt.Sprintf("listen %s %v", d, on) }
+func (f *fakeAI) Say(_ context.Context, d id.DeviceID, text string) error {
+	f.calls <- fmt.Sprintf("say %s %s", d, text)
+	return nil
+}
 
 func (f *fakeAI) want(t *testing.T, call string) {
 	t.Helper()
@@ -141,7 +146,7 @@ func TestDispatch(t *testing.T) {
 	send(websocket.TextMessage, `{"type":"wake","source":"touch"}`)
 	f.want(t, "listen 02:00:00:00:00:01 true")
 
-	// 尚无对应模块的消息不触发 AI。
+	// 位置在公园外：不触发 AI。
 	send(websocket.TextMessage, `{"type":"location","lat":31.2,"lng":121.5}`)
 
 	_ = ws.Close()
@@ -220,5 +225,19 @@ func TestChannelJoinNotifiesOnlyFriends(t *testing.T) {
 	_ = wsStranger.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	if _, data, err := wsStranger.ReadMessage(); err == nil {
 		t.Fatalf("stranger must not be told: %s", data)
+	}
+}
+
+func TestEnteringParkAsksToJoin(t *testing.T) {
+	f := &fakeAI{calls: make(chan string, 16)}
+	a := mustApp(t, f)
+	a.onZone(context.Background(), zone.Event{Kind: zone.Entered, Device: mac, Zone: zone.Park})
+	select {
+	case got := <-f.calls:
+		if !strings.HasPrefix(got, "say "+string(mac)) || !strings.Contains(got, "公园") {
+			t.Fatalf("call = %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no Say")
 	}
 }

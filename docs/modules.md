@@ -518,6 +518,9 @@ type Zones interface {
     OnLocation(ctx context.Context, d id.DeviceID, lat, lng float64) error
     JoinCurrent(ctx context.Context, d id.DeviceID) error // 不在任何区域时返回 ErrNotInZone
     ZoneAt(lat, lng float64) (ZoneID, bool)
+    Current(d id.DeviceID) (Zone, bool)
+    Forget(d id.DeviceID) // 断线时由 app 调用，重连后重新判定
+    All() []Zone          // 供 world 下发区域轮廓
     Subscribe() <-chan Event // Entered / Left
 }
 ```
@@ -528,7 +531,7 @@ type ZoneID string                                            // 对应频道 "z
 type Zone struct { ID ZoneID; Name string; Polygon []LatLng } // 演示只有一个：公园
 ```
 
-**规则** 进出各设 20 米滞回。进入只发 `Entered` 事件，等孩子同意；离开直接 `channel.LeaveZone`。
+**规则** 进出各设 20 米滞回：进到边界内 20 米才算进入，出到边界外 20 米才算离开。进入只发 `Entered` 事件，等孩子同意；离开直接 `channel.LeaveZone`。演示公园 `zone.Park` 的坐标同时用于 Web 地图（经 `/world` 下发）。启动时经 `channel.DefineZone` 登记区域频道。
 
 **依赖** channel、id。
 
