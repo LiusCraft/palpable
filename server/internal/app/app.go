@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 	"github.com/LiusCraft/palpable/server/internal/relation"
 	"github.com/LiusCraft/palpable/server/internal/store"
+	"github.com/LiusCraft/palpable/server/internal/zone"
 )
 
 // ai 是 app 用到的 bridge/linx 能力。voice（S5）落地后，音频与收音改由 voice 调用。
@@ -25,6 +27,7 @@ type ai interface {
 	Close(d id.DeviceID)
 	Forward(d id.DeviceID, frame []byte)
 	Listen(d id.DeviceID, on bool)
+	Say(ctx context.Context, d id.DeviceID, text string) error
 }
 
 type App struct {
@@ -32,6 +35,7 @@ type App struct {
 	ai    ai // 未配置灵矽时为 nil
 	rel   *relation.Relations
 	chans *channel.Channels
+	zones *zone.Zones
 	gw    *gateway.Gateway
 }
 
@@ -72,7 +76,7 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{store: d.store, ai: d.ai, rel: rel, chans: chans}
+	a := &App{store: d.store, ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park)}
 	a.gw = gateway.New(a, allowDevOrigin)
 	return a, nil
 }
@@ -81,6 +85,7 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 func (a *App) Start(ctx context.Context) {
 	go a.relationEvents(ctx)
 	go a.channelEvents(ctx)
+	go a.zoneEvents(ctx)
 	go a.sweepGroups(ctx)
 }
 
@@ -152,9 +157,12 @@ func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 		if err := a.rel.OnProximity(s.Context(), s.DeviceID(), peers); err != nil {
 			slog.Warn("proximity", "device_id", s.DeviceID(), "error", err)
 		}
+	case *protocol.Location:
+		if err := a.zones.OnLocation(s.Context(), s.DeviceID(), m.Lat, m.Lng); err != nil {
+			slog.Warn("location", "device_id", s.DeviceID(), "error", err)
+		}
 	default:
-		// location → zone（S4）。
-		slog.Debug("device message not handled yet", "device_id", s.DeviceID(), "type", msg.MsgType())
+		slog.Debug("device message not handled", "device_id", s.DeviceID(), "type", msg.MsgType())
 	}
 }
 
@@ -170,6 +178,7 @@ func (a *App) OnDisconnect(s *gateway.Session) {
 	}
 	// 区域频道成员只在线时有效；群成员身份保留。
 	_ = a.chans.LeaveZone(context.WithoutCancel(s.Context()), s.DeviceID())
+	a.zones.Forget(s.DeviceID())
 }
 
 // allowDevOrigin 开发期只放行本机前端；上线前改为配置白名单。
@@ -299,3 +308,31 @@ func channelColor(ch channel.Channel) string {
 	}
 	return groupColors[h%uint32(len(groupColors))]
 }
+
+func (a *App) zoneEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-a.zones.Subscribe():
+			a.onZone(ctx, e)
+		}
+	}
+}
+
+// onZone 进入区域时让小伙伴问孩子要不要加入；孩子同意后 AI 调用 self.zone.join。
+func (a *App) onZone(ctx context.Context, e zone.Event) {
+	if e.Kind != zone.Entered || a.ai == nil || !a.ready(ctx, e.Device) {
+		return
+	}
+	go func() {
+		sayCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := a.ai.Say(sayCtx, e.Device, fmt.Sprintf(sayZoneEntered, e.Zone.Name, e.Zone.Name)); err != nil {
+			slog.Warn("ask to join zone", "device_id", e.Device, "error", err)
+		}
+	}()
+}
+
+// ready 表示设备已完成起名与交棒；引导期间不打扰孩子问是否加入区域频道。device（S6）落地前视为已就绪。
+func (a *App) ready(context.Context, id.DeviceID) bool { return true }
