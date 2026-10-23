@@ -261,6 +261,12 @@ func TestChannelJoinNotifiesOnlyFriends(t *testing.T) {
 	if _, data, err := wsStranger.ReadMessage(); err == nil {
 		t.Fatalf("stranger must not be told: %s", data)
 	}
+
+	// 今日回顾记下了遇到的好朋友，陌生人不算。
+	dg, err := a.history.Today(ctx, mac)
+	if err != nil || len(dg.Met) != 1 || dg.Met[0].Friend != friend {
+		t.Fatalf("today met = %+v %v", dg.Met, err)
+	}
 }
 
 func TestEnteringParkAsksToJoin(t *testing.T) {
