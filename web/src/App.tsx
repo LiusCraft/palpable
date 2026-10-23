@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
+import { deviceMAC, deviceSkin } from './device-sim/identity'
 import { useDevice } from './device-sim/useDevice'
 import { Plush } from './plush/Plush'
 
@@ -7,7 +9,8 @@ const LINK_TEXT = { offline: '未连接', connecting: '连接中…', online: '�
 
 export default function App() {
   const { link, light, lastError, sessionId, micOn, connect, disconnect, wake, setMic } = useDevice()
-  const deviceId = new URLSearchParams(location.search).get('device') ?? 'plush-001'
+  const [deviceId] = useState(deviceMAC)
+  const [skin] = useState(deviceSkin)
 
   return (
     <div className="relative h-full">
@@ -25,7 +28,7 @@ export default function App() {
         {lastError && <div className="text-red-600">{lastError}</div>}
         <button
           className="mt-2 rounded-full bg-indigo-500 px-4 py-1 text-white"
-          onClick={() => (link === 'offline' ? connect(deviceId) : disconnect())}
+          onClick={() => (link === 'offline' ? connect(deviceId, skin) : disconnect())}
         >
           {link === 'offline' ? '连接网关' : '断开'}
         </button>

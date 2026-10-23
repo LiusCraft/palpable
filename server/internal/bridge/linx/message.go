@@ -2,7 +2,6 @@ package linx
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 )
@@ -25,16 +24,6 @@ func (w *welcome) normalize() {
 	if w.AudioParams.FrameDuration == 0 {
 		w.AudioParams.FrameDuration = 60
 	}
-}
-
-// PseudoMAC 由设备 ID 稳定地生成灵矽要求的 MAC 形式 Device-Id。
-// 最高字节固定为"本地管理的单播地址"（第二位为 1、最低位为 0），不会与真实厂商 MAC 冲突。
-// 生成后需要在灵矽侧预注册并关联智能体。
-func PseudoMAC(deviceID string) string {
-	sum := sha256.Sum256([]byte("palpable:" + deviceID))
-	b := sum[:6]
-	b[0] = (b[0] | 0x02) &^ 0x01
-	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5])
 }
 
 // newUUID 生成 v4 UUID，作为每条连接的 Client-Id。

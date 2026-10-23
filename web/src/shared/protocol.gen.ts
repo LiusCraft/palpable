@@ -17,12 +17,20 @@ export type PalpableMessage =
   | SpeakerState
   | Presence
   | Error;
+/**
+ * 设备 MAC，小写、冒号分隔；也是设备在灵矽侧的 Device-Id
+ */
+export type MAC = string;
 export type Capability = "mic" | "speaker" | "light" | "haptic" | "proximity" | "location" | "wake";
 export type LightState = "idle" | "listening" | "thinking" | "speaking" | "peer_talking" | "muted";
 
 export interface Hello {
   type: "hello";
-  device_id: string;
+  device_id: MAC;
+  /**
+   * 皮套款式，服务端据此选风格智能体；缺省或未知时用默认风格
+   */
+  skin?: string;
   firmware?: string;
   audio_params: AudioParams;
   capabilities: Capability[];

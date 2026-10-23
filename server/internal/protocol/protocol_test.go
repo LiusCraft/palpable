@@ -149,7 +149,7 @@ func TestDecodeUpstreamAcceptsEveryUpstreamType(t *testing.T) {
 		in   string
 		want Message
 	}{
-		{`{"type":"hello","device_id":"plush-001","audio_params":` + audioParams + `,"capabilities":[]}`, &Hello{}},
+		{`{"type":"hello","device_id":"02:00:00:00:00:01","skin":"bear","audio_params":` + audioParams + `,"capabilities":[]}`, &Hello{}},
 		{`{"type":"wake","source":"voice"}`, &Wake{}},
 		{`{"type":"mic.state","state":"start"}`, &MicState{}},
 		{`{"type":"proximity","peers":[]}`, &Proximity{}},
@@ -181,7 +181,9 @@ func TestDecodeUpstreamRejectsBadInput(t *testing.T) {
 		"empty device id":    `{"type":"hello","device_id":"","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
 		"device id too long": `{"type":"hello","device_id":"` + strings.Repeat("a", 65) + `","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
 		"bad device id":      `{"type":"hello","device_id":"a b","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
-		"bad audio params":   `{"type":"hello","device_id":"a","audio_params":{"format":"opus","sample_rate":8000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"non-mac id":         `{"type":"hello","device_id":"plush-001","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"bad skin":           `{"type":"hello","device_id":"02:00:00:00:00:01","skin":"Dragon!","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
+		"bad audio params":   `{"type":"hello","device_id":"02:00:00:00:00:01","audio_params":{"format":"opus","sample_rate":8000,"channels":1,"frame_duration":60},"capabilities":[]}`,
 		"bad mic state":      `{"type":"mic.state","state":"pause"}`,
 		"lat out of range":   `{"type":"location","lat":91,"lng":0}`,
 		"lng out of range":   `{"type":"location","lat":0,"lng":181}`,

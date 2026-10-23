@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Hello, LightState, PalpableMessage } from '../shared/protocol.gen'
+import type { Hello, LightState, MAC, PalpableMessage } from '../shared/protocol.gen'
 import { audioSupported, MicCapture, Player } from './audio'
 
 export type Link = 'offline' | 'connecting' | 'online'
@@ -12,7 +12,7 @@ interface DeviceState {
   lastError: string | null
   micOn: boolean
   speaking: boolean
-  connect: (deviceId: string) => void
+  connect: (deviceId: MAC, skin: string) => void
   disconnect: () => void
   wake: () => void
   setMic: (on: boolean) => Promise<void>
@@ -22,9 +22,10 @@ let socket: WebSocket | null = null
 const mic = new MicCapture()
 const player = new Player()
 
-const hello = (deviceId: string): Hello => ({
+const hello = (deviceId: MAC, skin: string): Hello => ({
   type: 'hello',
   device_id: deviceId,
+  skin,
   firmware: 'web-sim-0.1',
   audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 },
   capabilities: ['mic', 'speaker', 'light', 'haptic', 'proximity', 'location', 'wake'],
@@ -40,7 +41,7 @@ export const useDevice = create<DeviceState>((set, get) => ({
   micOn: false,
   speaking: false,
 
-  connect: (deviceId) => {
+  connect: (deviceId, skin) => {
     if (socket) return
     set({ deviceId, link: 'connecting', lastError: null })
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -48,7 +49,7 @@ export const useDevice = create<DeviceState>((set, get) => ({
     ws.binaryType = 'arraybuffer'
     socket = ws
 
-    ws.onopen = () => ws.send(JSON.stringify(hello(deviceId)))
+    ws.onopen = () => ws.send(JSON.stringify(hello(deviceId, skin)))
     ws.onmessage = (ev) => {
       if (typeof ev.data !== 'string') {
         player.push(ev.data as ArrayBuffer)
