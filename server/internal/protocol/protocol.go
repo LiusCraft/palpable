@@ -16,18 +16,19 @@ type Message interface {
 }
 
 const (
-	TypeHello        = "hello"
-	TypeWake         = "wake"
-	TypeMicState     = "mic.state"
-	TypeProximity    = "proximity"
-	TypeLocation     = "location"
-	TypeHelloAck     = "hello.ack"
-	TypeLight        = "light"
-	TypeHaptic       = "haptic"
-	TypeSound        = "sound"
-	TypeSpeakerState = "speaker.state"
-	TypePresence     = "presence"
-	TypeError        = "error"
+	TypeHello         = "hello"
+	TypeWake          = "wake"
+	TypeMicState      = "mic.state"
+	TypeProximity     = "proximity"
+	TypeLocation      = "location"
+	TypeHelloAck      = "hello.ack"
+	TypeAudioDownlink = "audio.downlink"
+	TypeLight         = "light"
+	TypeHaptic        = "haptic"
+	TypeSound         = "sound"
+	TypeSpeakerState  = "speaker.state"
+	TypePresence      = "presence"
+	TypeError         = "error"
 )
 
 // 错误码。
@@ -97,6 +98,14 @@ type HelloAck struct {
 	AudioParams AudioParams `json:"audio_params"`
 }
 
+// AudioDownlink 告知设备服务端下行音频的参数；灵矽的 TTS 采样率可能是 24kHz，
+// 设备必须按它配置解码器。AI 通道就绪后发送，早于任何下行音频帧。
+type AudioDownlink struct {
+	Type          string `json:"type"`
+	SampleRate    int    `json:"sample_rate"`
+	FrameDuration int    `json:"frame_duration"`
+}
+
 type Light struct {
 	Type    string `json:"type"`
 	State   string `json:"state"`
@@ -135,18 +144,19 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-func (*Hello) MsgType() string        { return TypeHello }
-func (*Wake) MsgType() string         { return TypeWake }
-func (*MicState) MsgType() string     { return TypeMicState }
-func (*Proximity) MsgType() string    { return TypeProximity }
-func (*Location) MsgType() string     { return TypeLocation }
-func (*HelloAck) MsgType() string     { return TypeHelloAck }
-func (*Light) MsgType() string        { return TypeLight }
-func (*Haptic) MsgType() string       { return TypeHaptic }
-func (*Sound) MsgType() string        { return TypeSound }
-func (*SpeakerState) MsgType() string { return TypeSpeakerState }
-func (*Presence) MsgType() string     { return TypePresence }
-func (*Error) MsgType() string        { return TypeError }
+func (*Hello) MsgType() string         { return TypeHello }
+func (*Wake) MsgType() string          { return TypeWake }
+func (*MicState) MsgType() string      { return TypeMicState }
+func (*Proximity) MsgType() string     { return TypeProximity }
+func (*Location) MsgType() string      { return TypeLocation }
+func (*HelloAck) MsgType() string      { return TypeHelloAck }
+func (*AudioDownlink) MsgType() string { return TypeAudioDownlink }
+func (*Light) MsgType() string         { return TypeLight }
+func (*Haptic) MsgType() string        { return TypeHaptic }
+func (*Sound) MsgType() string         { return TypeSound }
+func (*SpeakerState) MsgType() string  { return TypeSpeakerState }
+func (*Presence) MsgType() string      { return TypePresence }
+func (*Error) MsgType() string         { return TypeError }
 
 // DecodeUpstream 解析设备上行的文本消息；只接受上行类型，未知或非法一律返回 ErrBadMessage。
 func DecodeUpstream(data []byte) (Message, error) {

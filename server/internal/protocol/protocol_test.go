@@ -92,6 +92,7 @@ func TestEncodedDownstreamMatchesSchema(t *testing.T) {
 	ap := DefaultAudioParams()
 	msgs := []Message{
 		&HelloAck{Type: TypeHelloAck, SessionID: "s-1", AudioParams: ap},
+		&AudioDownlink{Type: TypeAudioDownlink, SampleRate: 24000, FrameDuration: 60},
 		&Light{Type: TypeLight, State: "listening", Color: "#7fb8ff", Pattern: "breathe"},
 		&Haptic{Type: TypeHaptic, Pattern: "tap"},
 		&Sound{Type: TypeSound, Name: "connected"},

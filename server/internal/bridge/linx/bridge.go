@@ -28,8 +28,9 @@ const (
 
 // Config 来自环境变量，见 ConfigFromEnv。
 type Config struct {
-	URL   string // 例如 wss://host/xiaozhi/v1/
-	Token string // Bearer 令牌
+	URL     string // 例如 wss://xrobo-io.qiniuapi.com/v1/ws/
+	Token   string // Bearer 令牌
+	AgentID string // 可选，经 X-Agent-ID 指定智能体；为空时用设备在平台上绑定的智能体
 }
 
 // Bridge 实现 gateway.Handler：为每台设备维护一条灵矽会话。
@@ -111,9 +112,10 @@ type link struct {
 func (l *link) run() {
 	defer l.cancel()
 
-	ws, sessionID, err := l.dial()
+	mac := PseudoMAC(l.dev.DeviceID())
+	ws, welcome, err := l.dial(mac)
 	if err != nil {
-		slog.Warn("linx dial failed", "device_id", l.dev.DeviceID(), "error", err)
+		slog.Warn("linx dial failed", "device_id", l.dev.DeviceID(), "linx_mac", mac, "error", err)
 		_ = l.dev.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "ai service unavailable"})
 		return
 	}
@@ -122,10 +124,18 @@ func (l *link) run() {
 	l.mu.Lock()
 	l.ws = ws
 	l.ready = true
-	l.linxSess = sessionID
+	l.linxSess = welcome.SessionID
 	wantListen := l.listening
 	l.mu.Unlock()
-	slog.Info("linx connected", "device_id", l.dev.DeviceID(), "linx_session", sessionID)
+	slog.Info("linx connected", "device_id", l.dev.DeviceID(), "linx_mac", mac,
+		"linx_session", welcome.SessionID, "downlink_rate", welcome.AudioParams.SampleRate)
+
+	// 灵矽的下行采样率可能是 24kHz，必须在任何音频帧之前告知设备。
+	_ = l.dev.Send(&protocol.AudioDownlink{
+		Type:          protocol.TypeAudioDownlink,
+		SampleRate:    welcome.AudioParams.SampleRate,
+		FrameDuration: welcome.AudioParams.FrameDuration,
+	})
 
 	// 设备在握手完成前就开了麦克风时，补发 listen。
 	if wantListen {
@@ -140,19 +150,23 @@ func (l *link) run() {
 	l.readLoop(ws)
 }
 
-func (l *link) dial() (*websocket.Conn, string, error) {
+func (l *link) dial(mac string) (*websocket.Conn, welcome, error) {
 	hdr := http.Header{}
-	hdr.Set("Device-Id", l.dev.DeviceID())
-	hdr.Set("Client-Id", "palpable-"+l.dev.DeviceID())
+	hdr.Set("Device-Id", mac) // 灵矽要求 MAC 形式，且该 MAC 需已预注册到智能体
+	hdr.Set("Client-Id", newUUID())
+	hdr.Set("Protocol-Version", "1")
 	if l.b.cfg.Token != "" {
 		hdr.Set("Authorization", "Bearer "+l.b.cfg.Token)
+	}
+	if l.b.cfg.AgentID != "" {
+		hdr.Set("X-Agent-ID", l.b.cfg.AgentID)
 	}
 
 	ctx, cancel := context.WithTimeout(l.ctx, dialTimeout)
 	defer cancel()
 	ws, _, err := l.b.dialer.DialContext(ctx, l.b.cfg.URL, hdr)
 	if err != nil {
-		return nil, "", fmt.Errorf("dial: %w", err)
+		return nil, welcome{}, fmt.Errorf("dial: %w", err)
 	}
 	ws.SetReadLimit(readLimit)
 
@@ -168,24 +182,22 @@ func (l *link) dial() (*websocket.Conn, string, error) {
 	_ = ws.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err := ws.WriteJSON(hello); err != nil {
 		ws.Close()
-		return nil, "", fmt.Errorf("send hello: %w", err)
+		return nil, welcome{}, fmt.Errorf("send hello: %w", err)
 	}
 
 	_ = ws.SetReadDeadline(time.Now().Add(dialTimeout))
-	var welcome struct {
-		Type      string `json:"type"`
-		SessionID string `json:"session_id"`
-	}
-	if err := ws.ReadJSON(&welcome); err != nil {
+	var w welcome
+	if err := ws.ReadJSON(&w); err != nil {
 		ws.Close()
-		return nil, "", fmt.Errorf("read welcome: %w", err)
+		return nil, welcome{}, fmt.Errorf("read welcome: %w", err)
 	}
 	_ = ws.SetReadDeadline(time.Time{})
-	if welcome.Type != "hello" {
+	if w.Type != "hello" {
 		ws.Close()
-		return nil, "", errors.New("unexpected first message from linx")
+		return nil, welcome{}, errors.New("unexpected first message from linx")
 	}
-	return ws, welcome.SessionID, nil
+	w.normalize()
+	return ws, w, nil
 }
 
 // readLoop 把灵矽的下行翻译成设备协议。
@@ -223,7 +235,8 @@ func (l *link) writeLinx(v any) error {
 }
 
 func (l *link) sendListen(state string) {
-	msg := map[string]any{"type": "listen", "state": state, "mode": "auto"}
+	// realtime 为全双工：说话可打断 AI，是免按键对话推荐的模式。
+	msg := map[string]any{"type": "listen", "state": state, "mode": "realtime"}
 	if err := l.writeLinx(msg); err != nil {
 		slog.Debug("linx listen send failed", "state", state, "error", err)
 	}
