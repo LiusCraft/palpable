@@ -1,0 +1,1 @@
+{"type":"hello","device_id":"02:1A:2B:3C:4D:5E","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":["mic"]}
