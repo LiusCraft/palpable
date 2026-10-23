@@ -4,4 +4,5 @@ package app
 const (
 	sayZoneEntered = "我们到%s啦！要不要加入%s频道，和好朋友们一起说话呀？"
 	sayWelcome     = "你好呀！我是小可，我来带你认识你的新朋友！你希望我怎么称呼你呀？"
+	sayHandoff     = "你好呀%s！我是%s，以后我就是你的好朋友啦！我们今天玩什么呢？"
 )

@@ -322,13 +322,18 @@ type ToolResult struct { Text string; IsError bool }
 func (p *Proxy) Register(t Tool)
 func (p *Proxy) OnDeviceMCP(d id.DeviceID, payload json.RawMessage) // 设备 → 灵矽
 func (p *Proxy) OnLinxMCP(d id.DeviceID, payload json.RawMessage)   // 灵矽 → 设备
+func (p *Proxy) Forget(d id.DeviceID)                               // 断线清理
+
+func BusinessTools(s Services) []Tool // Services 是 device、zone、channel、relation 的窄接口
 ```
 
 **规则**
 - `initialize`、`tools/list`：先取完设备的全部分页，再合并业务工具回复灵矽。
 - `tools/call`：名字属于业务工具 → 服务端执行；否则转给设备，结果原样回灵矽。
 - 调用身份来自连接，参数里没有设备 ID。设备工具与业务工具重名时以设备为准并记告警。
-- 设备不支持 MCP（`capabilities` 无 `mcp`）时，代理仍向灵矽提供业务工具。
+- 设备不支持 MCP（`capabilities` 无 `mcp`）时，代理仍向灵矽提供业务工具，`initialize` 由代理直接回复。
+- 代理自己发给设备的请求用字符串 ID `palpable-N`，与灵矽的数字 ID 不冲突；设备回复按 ID 认领，其余原样回灵矽。`initialize` 转给设备，视觉接口的地址与令牌随之到达设备。
+- 处理放在 goroutine 里，不阻塞灵矽会话的读循环；等设备回复最长 5 秒，业务工具最长 20 秒。业务工具出错时回一句儿童友好的"暂时没做成"。
 
 **业务工具**
 
