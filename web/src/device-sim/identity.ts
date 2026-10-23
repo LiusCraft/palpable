@@ -4,14 +4,14 @@ const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/
 const STORAGE_KEY = 'palpable.mac'
 
 // 本地管理的单播地址（首字节第二位为 1、最低位为 0），不会与真实厂商 MAC 冲突。
-function randomMAC(): MAC {
+export function randomMAC(): MAC {
   const b = crypto.getRandomValues(new Uint8Array(6))
   b[0] = (b[0] | 0x02) & 0xfe
   return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(':')
 }
 
 // 虚拟设备的 MAC：真实设备出厂自带，模拟器首次打开时生成并存在浏览器里。
-// ?device=<mac> 可覆盖，便于同一浏览器开多个"小朋友窗口"。
+// ?device=<mac> 可覆盖，便于多个浏览器窗口各扮一个小朋友。
 export function deviceMAC(): MAC {
   const fromURL = new URLSearchParams(location.search).get('device')?.toLowerCase()
   if (fromURL && MAC_RE.test(fromURL)) return fromURL
@@ -26,7 +26,7 @@ export function deviceMAC(): MAC {
   }
 }
 
-// 皮套款式；?skin= 可切换，默认小龙。
+// 皮套款式；?skin= 可切换，默认小熊（毛绒皮套）。
 export function deviceSkin(): string {
-  return new URLSearchParams(location.search).get('skin') ?? 'dragon'
+  return new URLSearchParams(location.search).get('skin') ?? 'bear'
 }

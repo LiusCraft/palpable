@@ -1,8 +1,9 @@
-// 设备的麦克风与扬声器：采集 16kHz 单声道、每 60ms 编码为一帧 Opus；播放时反向解码。
+// 设备的麦克风与扬声器：采集 16kHz 单声道、每 60ms 一帧，按需编码为 Opus；播放时反向解码。
 // 与协议约定一致（见 protocol/README.md）。依赖浏览器的 WebCodecs（Chromium 系）。
 
 const SAMPLE_RATE = 16000 // 上行（麦克风）固定 16kHz
 const FRAME_SAMPLES = 960 // 60ms
+const FRAME_US = 60000
 const DEFAULT_DOWNLINK_RATE = 16000 // 下行默认值，收到 audio.downlink 后以服务端为准
 
 const WORKLET_SRC = `
@@ -14,7 +15,9 @@ class FrameCollector extends AudioWorkletProcessor {
     for (let i = 0; i < ch.length; i++) {
       this.buf[this.n++] = ch[i]
       if (this.n === ${FRAME_SAMPLES}) {
-        this.port.postMessage(this.buf.slice(0))
+        let sum = 0
+        for (let j = 0; j < this.buf.length; j++) sum += this.buf[j] * this.buf[j]
+        this.port.postMessage({ pcm: this.buf.slice(0), rms: Math.sqrt(sum / this.buf.length) })
         this.n = 0
       }
     }
@@ -28,76 +31,86 @@ export function audioSupported(): boolean {
   return typeof AudioEncoder !== 'undefined' && typeof AudioDecoder !== 'undefined'
 }
 
+/** 采集 60ms 一帧的 PCM 与能量，由设备决定哪些帧要编码上行（设备端 VAD）。 */
 export class MicCapture {
   private ctx: AudioContext | null = null
   private stream: MediaStream | null = null
-  private encoder: AudioEncoder | null = null
 
-  async start(onFrame: (opus: ArrayBuffer) => void): Promise<void> {
+  get running(): boolean {
+    return this.ctx !== null
+  }
+
+  async start(onFrame: (pcm: Float32Array, rms: number) => void): Promise<void> {
     if (this.ctx) return
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
     const ctx = new AudioContext({ sampleRate: SAMPLE_RATE })
     this.ctx = ctx
-
-    const encoder = new AudioEncoder({
-      output: (chunk) => {
-        const out = new ArrayBuffer(chunk.byteLength)
-        chunk.copyTo(out)
-        onFrame(out)
-      },
-      error: (e) => console.error('opus encoder', e),
-    })
-    encoder.configure({
-      codec: 'opus',
-      sampleRate: SAMPLE_RATE,
-      numberOfChannels: 1,
-      bitrate: 24000,
-      opus: { frameDuration: 60000 },
-    })
-    this.encoder = encoder
-
     const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'text/javascript' }))
     await ctx.audioWorklet.addModule(url)
     URL.revokeObjectURL(url)
-
     const node = new AudioWorkletNode(ctx, 'frame-collector')
-    let timestamp = 0
-    node.port.onmessage = (ev: MessageEvent<Float32Array<ArrayBuffer>>) => {
-      if (encoder.state !== 'configured') return
-      const pcm = ev.data
-      encoder.encode(
-        new AudioData({
-          format: 'f32-planar',
-          sampleRate: SAMPLE_RATE,
-          numberOfFrames: pcm.length,
-          numberOfChannels: 1,
-          timestamp,
-          data: pcm,
-        }),
-      )
-      timestamp += 60000
-    }
+    node.port.onmessage = (ev: MessageEvent<{ pcm: Float32Array; rms: number }>) => onFrame(ev.data.pcm, ev.data.rms)
     ctx.createMediaStreamSource(this.stream).connect(node)
   }
 
   stop(): void {
     this.stream?.getTracks().forEach((t) => t.stop())
-    if (this.encoder && this.encoder.state !== 'closed') this.encoder.close()
     void this.ctx?.close()
     this.stream = null
-    this.encoder = null
     this.ctx = null
   }
 }
 
+/** 把 PCM 帧编码为 Opus（60ms 一帧）。每台虚拟设备一个，时间戳各自独立。 */
+export class FrameEncoder {
+  private encoder: AudioEncoder
+  private timestamp = 0
+
+  constructor(onOpus: (opus: ArrayBuffer) => void) {
+    this.encoder = new AudioEncoder({
+      output: (chunk) => {
+        const out = new ArrayBuffer(chunk.byteLength)
+        chunk.copyTo(out)
+        onOpus(out)
+      },
+      error: (e) => console.error('opus encoder', e),
+    })
+    this.encoder.configure({
+      codec: 'opus',
+      sampleRate: SAMPLE_RATE,
+      numberOfChannels: 1,
+      bitrate: 24000,
+      opus: { frameDuration: FRAME_US },
+    })
+  }
+
+  encode(pcm: Float32Array): void {
+    if (this.encoder.state !== 'configured') return
+    const data = new Float32Array(pcm)
+    this.encoder.encode(
+      new AudioData({ format: 'f32-planar', sampleRate: SAMPLE_RATE, numberOfFrames: data.length, numberOfChannels: 1, timestamp: this.timestamp, data }),
+    )
+    this.timestamp += FRAME_US
+  }
+
+  close(): void {
+    if (this.encoder.state !== 'closed') this.encoder.close()
+  }
+}
+
+/**
+ * 下行播放。AI 的 TTS 与好友的语音都是 Opus：Opus 解码可以输出任意采样率，
+ * 所以同一个解码器按 audio.downlink 的采样率解码两种来源即可。
+ */
 export class Player {
   private ctx: AudioContext | null = null
   private decoder: AudioDecoder | null = null
   private rate = DEFAULT_DOWNLINK_RATE
   private nextTime = 0
   private timestamp = 0
+  private sources = new Set<AudioBufferSourceNode>()
 
   /** 服务端下行采样率可能是 24kHz；变化时重建解码器与播放上下文，否则声音会变调。 */
   configure(sampleRate: number): void {
@@ -124,6 +137,8 @@ export class Player {
         const at = Math.max(ctx.currentTime + 0.05, this.nextTime)
         src.start(at)
         this.nextTime = at + buf.duration
+        this.sources.add(src)
+        src.onended = () => this.sources.delete(src)
       },
       error: (e) => console.error('opus decoder', e),
     })
@@ -133,23 +148,29 @@ export class Player {
   push(frame: ArrayBuffer): void {
     this.ensure()
     if (this.ctx?.state === 'suspended') void this.ctx.resume()
-    this.decoder?.decode(
-      new EncodedAudioChunk({ type: 'key', timestamp: this.timestamp, data: frame }),
-    )
-    this.timestamp += 60000
+    this.decoder?.decode(new EncodedAudioChunk({ type: 'key', timestamp: this.timestamp, data: frame }))
+    this.timestamp += FRAME_US
   }
 
-  /** 被打断或一句话结束后清掉排队的音频。 */
-  reset(): void {
+  /** 换来源或被打断时，立即停掉已排队的音频。 */
+  flush(): void {
+    for (const s of this.sources) {
+      try {
+        s.stop()
+      } catch {
+        // 已经停了
+      }
+    }
+    this.sources.clear()
     this.nextTime = 0
   }
 
   close(): void {
+    this.flush()
     if (this.decoder && this.decoder.state !== 'closed') this.decoder.close()
     void this.ctx?.close()
     this.decoder = null
     this.ctx = null
-    this.nextTime = 0
     this.timestamp = 0
   }
 }
