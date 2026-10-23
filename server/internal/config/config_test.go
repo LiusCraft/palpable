@@ -47,3 +47,10 @@ func TestLoadRejectsUnknownField(t *testing.T) {
 		t.Fatal("expected error for unknown field")
 	}
 }
+
+func TestLoadRejectsReadFailure(t *testing.T) {
+	// 目录不是 YAML 文件；ReadFile 会返回 EISDIR 而不是 ErrNotExist，必须上抛。
+	if _, err := Load(t.TempDir()); err == nil {
+		t.Fatal("expected error for unreadable path")
+	}
+}

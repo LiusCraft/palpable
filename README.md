@@ -79,7 +79,7 @@ cd web && pnpm install && pnpm dev
 
 不配置灵矽时，后端只做握手，**没有 AI 对话**。接入 AI 见下节。
 
-全量检查（协议类型生成、前端 lint、Go vet/test、前后端构建）：
+全量检查（协议类型生成、前端 lint、Go vet、单测覆盖率、前后端构建）：
 
 ```bash
 make check
@@ -89,7 +89,9 @@ Windows 没有 `make` 时，请在 `web`、`server` 目录分别执行 Makefile 
 
 ## 测试与覆盖率
 
-CI 在每次 PR 上运行单元测试；推送到 `main` 后，会额外把最新的后端覆盖率写入 [`badges`](https://github.com/liuscraft/palpable/tree/badges) 分支的 `coverage.svg`，README 顶部的徽章即取自该文件。PR 的覆盖率报告可从 Actions 的 `go-coverage` artifact 下载。
+PR 要求后端单测覆盖率 **≥ 90%**：`make check` 与 CI 都会执行 `make cover`，低于门槛直接失败。覆盖率只统计 `server/internal`（`cmd/palpabled` 只是装配入口，不纳入），`web/` 目前还没有单元测试。
+
+推送到 `main` 后，CI 会把最新覆盖率写入 [`badges`](https://github.com/liuscraft/palpable/tree/badges) 分支的 `coverage.svg`，README 顶部的徽章即取自该文件。PR 的覆盖率报告可从 Actions 的 `go-coverage` artifact 下载。
 
 本地测量并查看逐文件报告：
 
@@ -100,8 +102,6 @@ make cover
 ```bash
 cd server && go tool cover -html=coverage.out
 ```
-
-覆盖率目前只统计 `server/`（Go）；`web/` 还没有单元测试。
 
 ## 配置
 

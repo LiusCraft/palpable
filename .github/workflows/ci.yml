@@ -49,11 +49,6 @@ jobs:
       - name: Run project checks
         run: make check
 
-      # make check 只断言通过；这里单独留一份覆盖率报告
-      - name: Test with coverage
-        working-directory: server
-        run: go test -covermode=atomic -coverprofile=coverage.out ./...
-
       - name: Read total coverage
         id: coverage
         working-directory: server
