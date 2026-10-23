@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
+	"github.com/LiusCraft/palpable/server/internal/channel"
 	"github.com/LiusCraft/palpable/server/internal/config"
 	"github.com/LiusCraft/palpable/server/internal/gateway"
 	"github.com/LiusCraft/palpable/server/internal/id"
@@ -30,6 +31,7 @@ type App struct {
 	store store.Store
 	ai    ai // 未配置灵矽时为 nil
 	rel   *relation.Relations
+	chans *channel.Channels
 	gw    *gateway.Gateway
 }
 
@@ -66,7 +68,11 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{store: d.store, ai: d.ai, rel: rel}
+	chans, err := channel.New(ctx, d.store.Groups())
+	if err != nil {
+		return nil, err
+	}
+	a := &App{store: d.store, ai: d.ai, rel: rel, chans: chans}
 	a.gw = gateway.New(a, allowDevOrigin)
 	return a, nil
 }
@@ -74,6 +80,8 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 // Start 订阅领域事件并翻译成下行消息，直到 ctx 结束。
 func (a *App) Start(ctx context.Context) {
 	go a.relationEvents(ctx)
+	go a.channelEvents(ctx)
+	go a.sweepGroups(ctx)
 }
 
 func (a *App) Close() error { return a.store.Close() }
@@ -160,6 +168,8 @@ func (a *App) OnDisconnect(s *gateway.Session) {
 	if a.ai != nil {
 		a.ai.Close(s.DeviceID())
 	}
+	// 区域频道成员只在线时有效；群成员身份保留。
+	_ = a.chans.LeaveZone(context.WithoutCancel(s.Context()), s.DeviceID())
 }
 
 // allowDevOrigin 开发期只放行本机前端；上线前改为配置白名单。
@@ -217,4 +227,75 @@ func (a *App) onRelation(ctx context.Context, e relation.Event) {
 			a.send(d, state)
 		}
 	}
+}
+
+func (a *App) sweepGroups(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := a.chans.Sweep(ctx); err != nil {
+				slog.Warn("sweep groups", "error", err)
+			}
+		}
+	}
+}
+
+func (a *App) channelEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-a.chans.Subscribe():
+			a.onChannel(ctx, e)
+		}
+	}
+}
+
+// onChannel 告诉本设备前台频道的变化，并只让同频道的好友知道它来了或走了。
+func (a *App) onChannel(ctx context.Context, e channel.Event) {
+	d := id.OwnerDevice(e.Participant)
+	ch := e.Channel
+	state := &protocol.ChannelState{Type: protocol.TypeChannelState, Channel: string(ch.ID), Name: ch.Name, Color: channelColor(ch)}
+	switch e.Kind {
+	case channel.Joined:
+		state.Event = "joined"
+		a.send(d, state, &protocol.Sound{Type: protocol.TypeSound, Name: "joined"})
+		others := a.rel.FilterFriends(ctx, e.Participant, a.chans.Members(ch.ID))
+		for _, f := range others {
+			fd := id.OwnerDevice(f)
+			a.send(fd, a.presence("join", d, ch))
+			a.send(d, a.presence("join", fd, ch)) // 新来的也知道哪些好友已经在
+		}
+	case channel.Left:
+		state.Event = "left"
+		a.send(d, state, &protocol.Sound{Type: protocol.TypeSound, Name: "left"})
+		for _, f := range a.rel.FilterFriends(ctx, e.Participant, a.chans.Members(ch.ID)) {
+			a.send(id.OwnerDevice(f), a.presence("leave", d, ch))
+		}
+	case channel.Switched:
+		state.Event = "switched"
+		a.send(d, state, &protocol.Sound{Type: protocol.TypeSound, Name: "switched"})
+	}
+}
+
+func (a *App) presence(event string, d id.DeviceID, ch channel.Channel) *protocol.Presence {
+	return &protocol.Presence{Type: protocol.TypePresence, Event: event, DeviceID: string(d), Name: a.dollName(context.Background(), d), Channel: string(ch.ID)}
+}
+
+var groupColors = []string{"#ff9f43", "#54a0ff", "#ff6b9d", "#a55eea", "#26c6da", "#feca57"}
+
+// channelColor 给每个频道一个稳定的灯色：区域为绿色，群按 ID 取色。
+func channelColor(ch channel.Channel) string {
+	if ch.Kind == channel.KindZone {
+		return "#4caf50"
+	}
+	var h uint32
+	for _, r := range ch.ID {
+		h = h*31 + uint32(r)
+	}
+	return groupColors[h%uint32(len(groupColors))]
 }
