@@ -174,3 +174,51 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("healthz = %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestChannelJoinNotifiesOnlyFriends(t *testing.T) {
+	const friend, stranger id.DeviceID = "02:00:00:00:00:02", "02:00:00:00:00:03"
+	s := store.NewMemory()
+	ctx := context.Background()
+	if err := s.Friendships().Create(ctx, store.Friendship{ID: "f1", A: mac, B: friend, Status: int(relation.StatusConfirmed), CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := newApp(ctx, deps{store: s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.chans.DefineZone("zone:park", "公园")
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	wsMe, wsFriend, wsStranger := connect(t, srv, mac), connect(t, srv, friend), connect(t, srv, stranger)
+
+	for _, d := range []id.DeviceID{friend, stranger} {
+		if err := a.chans.JoinZone(ctx, d, "zone:park"); err != nil {
+			t.Fatal(err)
+		}
+		a.onChannel(ctx, <-a.chans.Subscribe())
+	}
+	readText(t, wsFriend) // channel.state
+	readText(t, wsFriend) // sound
+	readText(t, wsStranger)
+	readText(t, wsStranger)
+
+	if err := a.chans.JoinZone(ctx, mac, "zone:park"); err != nil {
+		t.Fatal(err)
+	}
+	a.onChannel(ctx, <-a.chans.Subscribe())
+
+	if got := readText(t, wsMe); !strings.Contains(got, `"type":"channel.state"`) || !strings.Contains(got, `"name":"公园"`) {
+		t.Fatalf("channel.state = %s", got)
+	}
+	readText(t, wsMe) // sound joined
+	if got := readText(t, wsMe); !strings.Contains(got, `"type":"presence"`) || !strings.Contains(got, string(friend)) {
+		t.Fatalf("me should learn friend is here: %s", got)
+	}
+	if got := readText(t, wsFriend); !strings.Contains(got, `"type":"presence"`) || !strings.Contains(got, string(mac)) {
+		t.Fatalf("friend presence = %s", got)
+	}
+	_ = wsStranger.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, data, err := wsStranger.ReadMessage(); err == nil {
+		t.Fatalf("stranger must not be told: %s", data)
+	}
+}

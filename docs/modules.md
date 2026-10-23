@@ -468,6 +468,9 @@ type Channels interface {
     Switch(ctx context.Context, d id.DeviceID, target string) error // 群名、"next"、"prev"
     Leave(ctx context.Context, d id.DeviceID, ch id.ChannelID) error
     Current(ctx context.Context, d id.DeviceID) (ChannelInfo, error)
+    List(ctx context.Context, d id.DeviceID) []ChannelInfo          // 所在全部频道，前台在前；供 parentapi
+    DefineZone(ch id.ChannelID, name string)                        // zone 启动时登记区域频道
+    Sweep(ctx context.Context) error                                // app 每分钟调用，清理过期群
     ForegroundOf(p id.ParticipantID) (id.ChannelID, bool) // 热路径
     Members(ch id.ChannelID) []id.ParticipantID          // 热路径
     Subscribe() <-chan Event                              // Joined / Left / Switched
@@ -495,7 +498,9 @@ type ChannelInfo struct { Channel Channel; Members []id.ParticipantID; Foregroun
 - 成员是参与者；设备加入时是 `dev:<mac>`。
 - 一台设备可在多个频道，**前台只有一个**；说话和收听只针对前台频道。
 - 4 位码在有效期内唯一，过期失效；同一设备 1 分钟内错码超过 5 次则暂时拒绝。
-- 区域频道成员只在内存；群与码持久化。
+- 区域频道成员只在内存，设备断线即离开；群与码持久化，重启后成员仍在，但前台要在入群或切群后才恢复。
+- 同一时刻只在一个区域频道；加入即成为前台；离开前台频道时，前台回到最近加入的另一个频道（发 `Switched`）。
+- 群名默认"群聊 + 码"；`Switch` 接受群名、码、`next`、`prev`。行程群 6 小时过期，今天群到当天午夜。
 
 **依赖** store、id。
 
