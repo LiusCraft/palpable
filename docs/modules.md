@@ -585,7 +585,12 @@ type Event struct {
 type Digest struct { Met []MetFriend; Shared []SharedScene; Chats []ChatLine }
 ```
 
-**规则** 遇到好友、分享由 `app` 转来的事件记录。聊天从 `linxapi.Sessions` 拉取，必须能按设备筛选才展示，否则会混入共用同一风格智能体的其他孩子的对话（见 [开放问题](architecture.md#11-开放问题)）。
+**规则** 遇到好友、分享由 `app` 转来的事件记录：设备加入频道时与在场的每位好友互记一笔，好友确认时双方各记一笔；同一好友在今日回顾里只出现一次。"今天"按北京时间。聊天从 `linxapi.Sessions` 实时拉取、不入库：消息带 `macAddress`，只展示标着本机 MAC 的用户与小伙伴的原话，没有 MAC 的一律不展示，避免混入共用同一风格智能体的其他孩子的对话。拉不到聊天时其余部分照常返回。
+
+```go
+func (h *History) RecordMet(ctx context.Context, d id.DeviceID, m MetFriend) error
+func (h *History) RecordShared(ctx context.Context, d id.DeviceID, s SharedScene) error
+```
 
 **依赖** store、linxapi、id。
 

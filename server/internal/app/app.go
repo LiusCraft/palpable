@@ -19,6 +19,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/config"
 	"github.com/LiusCraft/palpable/server/internal/device"
 	"github.com/LiusCraft/palpable/server/internal/gateway"
+	"github.com/LiusCraft/palpable/server/internal/history"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/linxapi"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
@@ -58,6 +59,7 @@ type App struct {
 	zones   *zone.Zones
 	voice   *voice.Router
 	mcp     *mcp.Proxy
+	history *history.History
 	gw      *gateway.Gateway
 
 	speaking sync.Map // id.DeviceID → bool：AI 是否正在说话，交棒前等它说完
@@ -116,6 +118,10 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		aiPort = d.ai
 	}
 	a.voice = voice.New(chans, rel, aiPort, a, func(dev id.DeviceID) string { return a.dollName(context.Background(), dev) })
+	a.history = history.New(d.store.History(), d.linx, func(ctx context.Context, dev id.DeviceID) (string, error) {
+		p, err := a.devices.Profile(ctx, dev)
+		return p.AgentID, err
+	})
 	a.mcp = mcp.New(a.toLinx, a.toDevice, a.hasMCP)
 	for _, t := range mcp.BusinessTools(mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel}) {
 		a.mcp.Register(t)
@@ -363,6 +369,7 @@ func (a *App) onRelation(ctx context.Context, e relation.Event) {
 		case relation.Confirmed:
 			state.Event = "confirmed"
 			a.send(d, state, &protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "long"})
+			a.recordMet(ctx, d, other, "")
 		case relation.Removed:
 			state.Event = "removed"
 			a.send(d, state)
@@ -413,6 +420,8 @@ func (a *App) onChannel(ctx context.Context, e channel.Event) {
 			fd := id.OwnerDevice(f)
 			a.send(fd, a.presence("join", d, ch))
 			a.send(d, a.presence("join", fd, ch)) // 新来的也知道哪些好友已经在
+			a.recordMet(ctx, d, fd, string(ch.ID))
+			a.recordMet(ctx, fd, d, string(ch.ID))
 		}
 	case channel.Left:
 		a.voice.OnLeave(d)
@@ -586,5 +595,13 @@ func (a *App) waitAISilent(ctx context.Context, d id.DeviceID) {
 			return
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+}
+
+// recordMet 记一笔"今天遇到了好朋友"，家长端的今日回顾会用到。
+func (a *App) recordMet(ctx context.Context, d, friend id.DeviceID, ch string) {
+	m := history.MetFriend{Friend: friend, Name: a.dollName(ctx, friend), Channel: ch}
+	if err := a.history.RecordMet(ctx, d, m); err != nil {
+		slog.Warn("record met friend", "device_id", d, "error", err)
 	}
 }
