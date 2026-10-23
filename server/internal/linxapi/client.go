@@ -18,6 +18,7 @@ import (
 
 const (
 	DefaultBase    = "https://xrobo.qiniu.com"
+	DefaultOTA     = "https://xrobo.qiniu.com/xiaozhi/ota/"
 	requestTimeout = 10 * time.Second
 
 	codeMemoryExists = 614 // 智能体已有记忆容器
@@ -28,6 +29,8 @@ var (
 	ErrNotFound     = errors.New("linxapi: not found")
 	// ErrAlreadyRegistered 表示 MAC 已经预注册过；调用方按"已开通"处理。
 	ErrAlreadyRegistered = errors.New("linxapi: device already registered")
+	// ErrActivationRequired 表示 OTA 返回了激活码：预注册没能自动绑定，需要在灵矽控制台输入激活码。
+	ErrActivationRequired = errors.New("linxapi: device needs activation code")
 )
 
 // APIError 是灵矽返回的非 0 业务码。
@@ -45,6 +48,8 @@ type Client interface {
 	CreateAgent(ctx context.Context, a AgentSpec) (agentID string, err error)
 	FindAgentByName(ctx context.Context, name string) (agentID string, found bool, err error)
 	PreregisterDevice(ctx context.Context, agentID, mac string) error
+	// ActivateDevice 以设备身份访问 OTA，让预注册的 MAC 完成绑定；之前灵矽会话会回"请去绑定智能体"。
+	ActivateDevice(ctx context.Context, mac string) error
 	SwitchAgent(ctx context.Context, mac, agentID string, migrateHistory bool) error
 	EnableMemory(ctx context.Context, agentID string) (memoryID string, err error)
 	UpsertAttention(ctx context.Context, memoryID, name, description string) (attentionID string, err error)
@@ -91,6 +96,7 @@ type Message struct {
 
 type HTTPClient struct {
 	base  string
+	ota   string
 	token string
 	http  *http.Client
 }
@@ -101,7 +107,15 @@ func New(base, token string) *HTTPClient {
 	if base == "" {
 		base = DefaultBase
 	}
-	return &HTTPClient{base: strings.TrimRight(base, "/"), token: token, http: &http.Client{Timeout: requestTimeout}}
+	return &HTTPClient{base: strings.TrimRight(base, "/"), ota: DefaultOTA, token: token, http: &http.Client{Timeout: requestTimeout}}
+}
+
+// WithOTA 覆盖 OTA 地址；空串保留默认。
+func (c *HTTPClient) WithOTA(u string) *HTTPClient {
+	if u != "" {
+		c.ota = u
+	}
+	return c
 }
 
 type envelope struct {
@@ -236,6 +250,53 @@ func (c *HTTPClient) PreregisterDevice(ctx context.Context, agentID, mac string)
 		}
 	}
 	return nil
+}
+
+func (c *HTTPClient) ActivateDevice(ctx context.Context, mac string) error {
+	clientID := deviceClientID(mac)
+	body := map[string]any{
+		"version": 0, "uuid": clientID, "mac_address": mac, "chip_model_name": "", "partition_table": []any{},
+		"application": map[string]any{"name": "palpable", "version": "1.0.0", "compile_time": "2026-10-23 00:00:00",
+			"idf_version": "none", "elf_sha256": strings.Repeat("0", 64)},
+		"board": map[string]any{"type": "palpable-server", "ssid": "", "rssi": 0, "ip": "0.0.0.0"},
+	}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.ota, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Device-Id", mac)
+	req.Header.Set("Client-Id", clientID)
+	req.Header.Set("Activation-Version", "1")
+	req.Header.Set("User-Agent", "palpable/1.0.0")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("linxapi ota: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("linxapi ota: http %d", resp.StatusCode)
+	}
+	var res struct {
+		Activation *struct {
+			Code string `json:"code"`
+		} `json:"activation"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return fmt.Errorf("linxapi ota: decode: %w", err)
+	}
+	if res.Activation != nil {
+		return fmt.Errorf("%w: %s", ErrActivationRequired, res.Activation.Code)
+	}
+	return nil
+}
+
+// deviceClientID 由 MAC 稳定生成 UUID 形式的 Client-Id，同一设备每次一致。
+func deviceClientID(mac string) string {
+	h := strings.ReplaceAll(mac, ":", "")
+	h = (h + strings.Repeat("0", 32))[:32]
+	return h[0:8] + "-" + h[8:12] + "-4" + h[13:16] + "-8" + h[17:20] + "-" + h[20:32]
 }
 
 func (c *HTTPClient) SwitchAgent(ctx context.Context, mac, agentID string, migrateHistory bool) error {

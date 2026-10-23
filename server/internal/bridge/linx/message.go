@@ -37,9 +37,10 @@ func newUUID() string {
 
 // linxMsg 是灵矽下行文本消息中我们关心的字段。
 type linxMsg struct {
-	Type  string `json:"type"`
-	State string `json:"state"`
-	Text  string `json:"text"`
+	Type      string `json:"type"`
+	State     string `json:"state"`
+	Text      string `json:"text"`
+	ErrorCode int    `json:"error_code"`
 }
 
 func parseLinx(data []byte) (linxMsg, error) {

@@ -2,9 +2,16 @@
 addr: ":8080"
 db_path: palpable.db  # SQLite 文件，不入库
 
+# 演示预置：新设备自动绑定到这个家长，并预置声纹登记的同意（产品里由家长端取得）。
+demo:
+  guardian: demo-parent
+  guardian_name: 朵朵妈妈
+  voice_consent: false
+
 # 不填 ws_url 则不启用 AI 对话。
 linx:
   ws_url: wss://xrobo-io.qiniuapi.com/v1/ws/
   token: ""
   api_base: https://xrobo.qiniu.com   # REST 地址
+  ota_url: https://xrobo.qiniu.com/xiaozhi/ota/   # 激活预注册的设备
   voiceprint_base: ""   # 声纹服务地址（演示环境）

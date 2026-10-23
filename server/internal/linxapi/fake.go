@@ -77,6 +77,8 @@ func (f *Fake) PreregisterDevice(_ context.Context, agentID, mac string) error {
 	return nil
 }
 
+func (f *Fake) ActivateDevice(context.Context, string) error { return nil }
+
 func (f *Fake) SwitchAgent(_ context.Context, mac, agentID string, _ bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

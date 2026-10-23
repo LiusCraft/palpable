@@ -406,3 +406,18 @@ func TestDeviceDisconnectReleasesEverything(t *testing.T) {
 		t.Fatalf("goroutines leaked: before=%d after=%d\n%s", before, n, buf[:runtime.Stack(buf, true)])
 	}
 }
+
+func TestPlatformErrorIsNotPlayedToChild(t *testing.T) {
+	f := newFakeLinx(t)
+	_, dev, linx := open(t, f, Persona{})
+
+	_ = linx.WriteJSON(map[string]any{"type": "stt", "text": "请去绑定智能体。", "error_code": 10001})
+	if e, ok := dev.next(t).(*protocol.Error); !ok || e.Code != protocol.CodeInternal {
+		t.Fatalf("expected error, got %#v", e)
+	}
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "start"})
+	_ = linx.WriteMessage(websocket.BinaryMessage, []byte{1})
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "stop"})
+	noRecv(t, dev.audio, "platform error speech")
+	noRecv(t, dev.msgs, "speaker state for platform error")
+}

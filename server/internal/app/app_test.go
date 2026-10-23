@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
+	"github.com/LiusCraft/palpable/server/internal/device"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/relation"
 	"github.com/LiusCraft/palpable/server/internal/store"
@@ -41,6 +42,18 @@ func (f *fakeAI) Say(_ context.Context, d id.DeviceID, text string) error {
 	return nil
 }
 
+func (f *fakeAI) wantPrefix(t *testing.T, prefix string) {
+	t.Helper()
+	select {
+	case got := <-f.calls:
+		if !strings.HasPrefix(got, prefix) {
+			t.Fatalf("call = %q, want prefix %q", got, prefix)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for %q", prefix)
+	}
+}
+
 func (f *fakeAI) want(t *testing.T, call string) {
 	t.Helper()
 	select {
@@ -61,6 +74,9 @@ func mustApp(t *testing.T, f ai) *App {
 	}
 	a, err := newApp(context.Background(), d)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.catalog.EnsureAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return a
@@ -138,7 +154,9 @@ func TestDispatch(t *testing.T) {
 		}
 	}
 	send(websocket.TextMessage, helloJSON)
-	f.want(t, `open 02:00:00:00:00:01 agent=""`)
+	// 新设备：开通后以引导智能体开会话，小可先打招呼。
+	f.wantPrefix(t, `open 02:00:00:00:00:01 agent="agent-`)
+	f.wantPrefix(t, "say 02:00:00:00:00:01 你好呀！我是小可")
 
 	send(websocket.TextMessage, `{"type":"mic.state","state":"start"}`)
 	f.want(t, "listen 02:00:00:00:00:01 true")
@@ -195,6 +213,9 @@ func TestChannelJoinNotifiesOnlyFriends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := a.catalog.EnsureAll(ctx); err != nil {
+		t.Fatal(err)
+	}
 	a.chans.DefineZone("zone:park", "公园")
 	srv := httptest.NewServer(a.Handler())
 	defer srv.Close()
@@ -235,6 +256,17 @@ func TestChannelJoinNotifiesOnlyFriends(t *testing.T) {
 func TestEnteringParkAsksToJoin(t *testing.T) {
 	f := &fakeAI{calls: make(chan string, 16)}
 	a := mustApp(t, f)
+	ctx := context.Background()
+	// 引导期的设备不打扰。
+	a.onZone(ctx, zone.Event{Kind: zone.Entered, Device: mac, Zone: zone.Park})
+	select {
+	case got := <-f.calls:
+		t.Fatalf("fresh device asked: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := a.store.Devices().Create(ctx, store.Device{ID: mac, Stage: int(device.StageReady), CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	a.onZone(context.Background(), zone.Event{Kind: zone.Entered, Device: mac, Zone: zone.Park})
 	select {
 	case got := <-f.calls:
