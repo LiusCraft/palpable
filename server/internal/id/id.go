@@ -1,7 +1,11 @@
 // Package id 放跨模块共用的标识类型，避免模块之间为了一个类型互相 import。
 package id
 
-import "strings"
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"strings"
+)
 
 // DeviceID 是设备 MAC，与 hello.device_id 一致。
 type DeviceID string
@@ -49,4 +53,11 @@ func OwnerDevice(p ParticipantID) DeviceID {
 		return DeviceID(strings.TrimPrefix(string(p), agentPrefix))
 	}
 	return ""
+}
+
+// New 生成随机记录 ID（好友请求、群、历史事件等），16 位十六进制。
+func New() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

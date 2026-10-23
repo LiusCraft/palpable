@@ -14,6 +14,8 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/gateway"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
+	"github.com/LiusCraft/palpable/server/internal/relation"
+	"github.com/LiusCraft/palpable/server/internal/store"
 )
 
 // ai 是 app 用到的 bridge/linx 能力。voice（S5）落地后，音频与收音改由 voice 调用。
@@ -25,28 +27,56 @@ type ai interface {
 }
 
 type App struct {
-	ai ai // 未配置灵矽时为 nil
-	gw *gateway.Gateway
+	store store.Store
+	ai    ai // 未配置灵矽时为 nil
+	rel   *relation.Relations
+	gw    *gateway.Gateway
 }
 
 var _ gateway.Handler = (*App)(nil)
 
-func New(cfg config.Config) *App {
-	var bridge ai
+// deps 是外部依赖；测试用假实现替换。
+type deps struct {
+	store store.Store
+	ai    ai
+}
+
+func New(ctx context.Context, cfg config.Config) (*App, error) {
+	db, err := store.Open(ctx, cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	d := deps{store: db}
 	if cfg.Linx.Enabled() {
-		bridge = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token})
+		d.ai = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token})
 		slog.Info("linx bridge enabled")
 	} else {
 		slog.Warn("linx.ws_url not set, AI conversation disabled")
 	}
-	return newApp(bridge)
+	a, err := newApp(ctx, d)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return a, nil
 }
 
-func newApp(bridge ai) *App {
-	a := &App{ai: bridge}
+func newApp(ctx context.Context, d deps) (*App, error) {
+	rel, err := relation.New(ctx, d.store.Friendships())
+	if err != nil {
+		return nil, err
+	}
+	a := &App{store: d.store, ai: d.ai, rel: rel}
 	a.gw = gateway.New(a, allowDevOrigin)
-	return a
+	return a, nil
 }
+
+// Start 订阅领域事件并翻译成下行消息，直到 ctx 结束。
+func (a *App) Start(ctx context.Context) {
+	go a.relationEvents(ctx)
+}
+
+func (a *App) Close() error { return a.store.Close() }
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -60,7 +90,14 @@ func (a *App) Handler() http.Handler {
 
 // Run 组装并运行 palpabled，直到 ctx 结束。
 func Run(ctx context.Context, cfg config.Config) error {
-	srv := &http.Server{Addr: cfg.Addr, Handler: New(cfg).Handler(), ReadHeaderTimeout: 5 * time.Second}
+	a, err := New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	a.Start(ctx)
+
+	srv := &http.Server{Addr: cfg.Addr, Handler: a.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -99,8 +136,16 @@ func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 		if a.ai != nil {
 			a.ai.Listen(s.DeviceID(), true)
 		}
+	case *protocol.Proximity:
+		peers := make([]relation.Peer, 0, len(m.Peers))
+		for _, p := range m.Peers {
+			peers = append(peers, relation.Peer{Device: id.DeviceID(p.DeviceID), Strength: p.Strength})
+		}
+		if err := a.rel.OnProximity(s.Context(), s.DeviceID(), peers); err != nil {
+			slog.Warn("proximity", "device_id", s.DeviceID(), "error", err)
+		}
 	default:
-		// proximity → relation（S3），location → zone（S4）。
+		// location → zone（S4）。
 		slog.Debug("device message not handled yet", "device_id", s.DeviceID(), "type", msg.MsgType())
 	}
 }
@@ -124,4 +169,52 @@ func allowDevOrigin(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// send 向在线设备下发消息；设备不在线时丢弃，它上线后会从档案与频道状态重新得到所需信息。
+func (a *App) send(d id.DeviceID, msgs ...protocol.Message) {
+	sess, ok := a.gw.Session(d)
+	if !ok {
+		return
+	}
+	for _, m := range msgs {
+		if err := sess.Send(m); err != nil {
+			return
+		}
+	}
+}
+
+// dollName 返回设备小伙伴的名字，供提示与展示；device（S6）落地前为空。
+func (a *App) dollName(context.Context, id.DeviceID) string { return "" }
+
+func (a *App) relationEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-a.rel.Subscribe():
+			a.onRelation(ctx, e)
+		}
+	}
+}
+
+func (a *App) onRelation(ctx context.Context, e relation.Event) {
+	f := e.Friendship
+	for _, d := range []id.DeviceID{f.A, f.B} {
+		other := f.Other(d)
+		state := &protocol.FriendState{Type: protocol.TypeFriendState, DeviceID: other, Name: a.dollName(ctx, other)}
+		switch e.Kind {
+		case relation.Proposed:
+			state.Event = "pending"
+			a.send(d, state,
+				&protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "double_tap"},
+				&protocol.Sound{Type: protocol.TypeSound, Name: "friend"})
+		case relation.Confirmed:
+			state.Event = "confirmed"
+			a.send(d, state, &protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "long"})
+		case relation.Removed:
+			state.Event = "removed"
+			a.send(d, state)
+		}
+	}
 }
