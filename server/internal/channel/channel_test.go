@@ -101,7 +101,7 @@ func TestGroupCodeJoinSwitchAndPersistence(t *testing.T) {
 	ctx := context.Background()
 
 	must(t, c.JoinZone(ctx, a, park))
-	code, err := c.CreateGroup(ctx, a, TTLToday)
+	code, err := c.CreateGroup(ctx, a, TTLForever)
 	must(t, err)
 	if len(code) != 4 {
 		t.Fatalf("code = %q", code)
