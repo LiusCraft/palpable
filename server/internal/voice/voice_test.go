@@ -244,6 +244,25 @@ func TestRouting(t *testing.T) {
 	}
 }
 
+// 加入频道后小伙伴还在播报时孩子开口：打断播报，话进频道而不是进 AI。
+func TestSpeakingInterruptsOwnAIAnnouncement(t *testing.T) {
+	g := newRig(t)
+	g.members.join(a)
+	g.r.OnAIState(a, AISpeaking)
+
+	g.r.OnMicState(a, true)
+	if !g.ai.has("interrupt " + string(a)) {
+		t.Fatal("kid speaking must interrupt own AI announcement")
+	}
+	g.r.OnMicFrame(a, []byte{1})
+	if g.ai.fwd() != 0 {
+		t.Fatal("speech after joining must go to the channel, not the AI")
+	}
+	if bu := g.r.bursts[park]; bu == nil || bu.Speaker != id.Device(a) {
+		t.Fatal("kid should hold the floor")
+	}
+}
+
 // 2. 屏蔽 + 6. 延迟时间戳
 func TestOnlyFriendsHearAndRemovalCutsOff(t *testing.T) {
 	g := newRig(t)
