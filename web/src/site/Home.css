@@ -88,6 +88,9 @@
 .site-section { max-width: 1320px; margin: auto; padding: 100px 54px; }
 .site-section-heading h2 { font-family: "Palpable Display", "Microsoft YaHei", sans-serif; font-size: clamp(32px, 3.1vw, 46px); font-weight: 900; line-height: 1.35; text-wrap: balance; }
 .site-section-heading > p { max-width: 540px; margin-top: 16px; color: var(--site-muted); font-size: 17px; line-height: 1.9; text-wrap: pretty; }
+.site-demo { padding-bottom: 40px; text-align: center; }
+.site-demo .site-section-heading > p { margin-inline: auto; }
+.site-demo-video { display: block; width: 100%; max-width: 960px; height: auto; aspect-ratio: 16 / 9; margin: 40px auto 0; border-radius: 24px; background: var(--site-navy); box-shadow: 0 24px 60px -32px rgb(11 48 93 / .55); }
 .site-actions { padding-top: 90px; padding-bottom: 110px; }
 .site-actions > .site-section-heading { text-align: center; }
 .site-actions > .site-section-heading p { margin-inline: auto; }

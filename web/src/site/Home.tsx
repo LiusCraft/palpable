@@ -190,6 +190,12 @@ export function Home() {
       <main>
         <Hero />
         <Features />
+        <section id="demo" className="site-section site-demo" aria-label={site.demo.title}>
+          <SectionTitle sub={site.demo.sub}>{site.demo.title}</SectionTitle>
+          <video className="site-demo-video" src="/palpable-demo.mp4" poster="/palpable-demo-poster.jpg" controls playsInline preload="none" width="1280" height="720">
+            {site.demo.fallback}
+          </video>
+        </section>
         <section id="actions" className="site-section site-actions">
           <SectionTitle sub={site.actions.sub}>{site.actions.title}</SectionTitle>
           <div className="site-action-list">

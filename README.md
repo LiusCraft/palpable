@@ -12,7 +12,7 @@
 
 ![可感 Palpable 产品海报](docs/assets/poster.jpg)
 
-<!-- TODO: 补充演示 GIF -->
+**演示视频（约 1 分钟）：** [观看 palpable-demo.mp4](web/public/palpable-demo.mp4)；官网首页「一分钟看懂可感」一节也内嵌了同一段视频。
 
 ## 目录
 
