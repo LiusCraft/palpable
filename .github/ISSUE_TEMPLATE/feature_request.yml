@@ -1,0 +1,19 @@
+name: Feature request
+description: 提议一个与产品路线相关的改进
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 说明用户场景和当前限制。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 描述期望行为及可能的验收标准。
+    validations:
+      required: true
