@@ -32,6 +32,9 @@ func TestEventLoopsTranslateAllKinds(t *testing.T) {
 		t.Fatalf("confirmed = %s", got)
 	}
 	readText(t, ws) // haptic
+	if got := readText(t, ws); !strings.Contains(got, `"name":"friend"`) {
+		t.Fatalf("sound = %s", got)
+	}
 	a.onRelation(ctx, relation.Event{Kind: relation.Removed, Friendship: f})
 	if got := readText(t, ws); !strings.Contains(got, `"event":"removed"`) {
 		t.Fatalf("removed = %s", got)

@@ -2,7 +2,7 @@ import { ContactShadows } from '@react-three/drei'
 import { Canvas } from '@react-three/fiber'
 import { useStore } from 'zustand'
 import type { VirtualDevice } from '../../device-sim/device'
-import { useDevices } from '../../device-sim/devices'
+import { useClient } from '../../device-sim/client'
 import { Plush } from '../../plush/Plush'
 import { copy } from '../../ui/copy'
 
@@ -11,7 +11,7 @@ import { copy } from '../../ui/copy'
 
 export function Skins({ device }: { device: VirtualDevice }) {
   const skin = useStore(device.store, (s) => s.skin)
-  const changeSkin = useDevices((s) => s.changeSkin)
+  const changeSkin = useClient((s) => s.changeSkin)
   const list = copy.skins.list
   return (
     <div>
@@ -26,7 +26,7 @@ export function Skins({ device }: { device: VirtualDevice }) {
               light={s.skin === skin ? 'listening' : 'idle'}
               position={[(i - (list.length - 1) / 2) * 2.1, 0.1, 0]}
               scale={0.8}
-              onTap={() => changeSkin(device.mac, s.skin)}
+              onTap={() => changeSkin(s.skin)}
             />
           ))}
           <ContactShadows position={[0, -1.05, 0]} opacity={0.3} scale={12} blur={2.4} />
@@ -37,7 +37,7 @@ export function Skins({ device }: { device: VirtualDevice }) {
           <button
             key={s.skin}
             type="button"
-            onClick={() => changeSkin(device.mac, s.skin)}
+            onClick={() => changeSkin(s.skin)}
             className={`rounded-xl px-2 py-2 ${s.skin === skin ? 'bg-[#2f6bff] text-white' : 'bg-white text-slate-600 ring-1 ring-slate-200'}`}
           >
             <div className="text-sm font-semibold">{s.name}</div>

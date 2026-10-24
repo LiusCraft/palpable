@@ -8,6 +8,7 @@ import { parentApi, type Digest, type Friend, type Group, type Kid } from './api
 
 const SKIN_EMOJI: Record<string, string> = { bear: '🐻', rabbit: '🐰', dragon: '🐲', cat: '🐱' }
 const POLL = 3000
+const NEW_FRIEND_MS = 24 * 60 * 60 * 1000
 
 type Tab = 'friends' | 'digest' | 'control'
 
@@ -19,6 +20,7 @@ export function ParentPanel() {
   const [digest, setDigest] = useState<Digest | null>(null)
   const [tab, setTab] = useState<Tab>('friends')
   const [error, setError] = useState('')
+  const [now, setNow] = useState(0) // 随轮询更新，渲染时不直接取时间
 
   // 默认看在线的孩子。
   const current = kid || kids.find((k) => k.online)?.id || kids[0]?.id || ''
@@ -33,6 +35,7 @@ export function ParentPanel() {
       setFriends(f)
       setGroups(g)
       setDigest(d)
+      setNow(Date.now())
       setError('')
     } catch (e) {
       setError(e instanceof Error && e.message === '404' ? '家长端未开放（服务端未配置 demo.parent_token）' : '连不上家长端')
@@ -113,6 +116,7 @@ export function ParentPanel() {
               <span className="flex-1">
                 <div className="font-medium">{f.name || copy.friend.someone}</div>
                 <div className={`text-xs ${f.online ? 'text-emerald-600' : 'text-slate-400'}`}>● {f.online ? copy.parent.online : copy.parent.offline}</div>
+                {f.auto && now - Date.parse(f.since) < NEW_FRIEND_MS && <div className="text-xs text-amber-600">🔔 {copy.parent.autoAdded}</div>}
               </span>
             </li>
           ))}

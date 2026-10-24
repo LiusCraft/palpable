@@ -378,6 +378,11 @@ func (r *Router) takeFloorLocked(d id.DeviceID, now time.Time, fx *effects) *Bur
 		return b
 	}
 
+	// 加入频道后小伙伴的确认播报还没说完时孩子开口了：孩子优先，直接打断播报。
+	if sv := r.dev(d); sv.aiSpeaking || sv.source == SourceAI {
+		fx.interrupt = append(fx.interrupt, d)
+	}
+
 	b := &Burst{Channel: ch, Speaker: speaker, StartedAt: now, LastFrameAt: now}
 	for _, m := range r.members.Members(ch) {
 		if m == speaker {
