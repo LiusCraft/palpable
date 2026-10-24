@@ -8,6 +8,7 @@ import { audioSupported, FrameEncoder, Player } from './audio'
 import { lookAround } from './environment'
 import { handleMcp, type JsonRpc } from './mcp'
 import { PREROLL_FRAMES, Vad } from './vad'
+import { WakeWordEngine } from './wake-word'
 
 export type Link = 'offline' | 'connecting' | 'online'
 
@@ -47,6 +48,10 @@ export class VirtualDevice {
   private player = new Player()
   private encoder: FrameEncoder | null = null
   private vad = new Vad()
+  // 自己扬声器里的声音不算唤醒，否则 AI 说出"小伙伴"会自己叫醒自己。
+  private wakeWord = new WakeWordEngine(() => {
+    if (!this.store.getState().speaking) this.wake('voice')
+  })
   private preroll: Float32Array[] = []
   private pushToTalk = false
   private lastLocationAt = 0
@@ -134,6 +139,7 @@ export class VirtualDevice {
 
   dispose(): void {
     this.disconnect()
+    this.wakeWord.enable(false)
     this.encoder?.close()
     this.player.close()
   }
@@ -149,6 +155,9 @@ export class VirtualDevice {
         break
       case 'audio.downlink':
         this.player.configure(msg.sample_rate)
+        break
+      case 'wake.config':
+        this.wakeWord.setWords(msg.words)
         break
       case 'light':
         this.set({ light: msg.state })
@@ -233,10 +242,10 @@ export class VirtualDevice {
     this.overrideTimer = window.setTimeout(() => this.set({ lightOverride: null }), 15000)
   }
 
-  /** 点一下玩偶：本地唤醒，接下来这句话说给小伙伴（AI）。 */
-  wake(): void {
+  /** 本地唤醒（点一下玩偶，或听到唤醒词）：接下来这句话说给小伙伴（AI）。 */
+  wake(source: 'touch' | 'voice' = 'touch'): void {
     if (this.store.getState().link !== 'online') return
-    this.send({ type: 'wake', source: 'touch' })
+    this.send({ type: 'wake', source })
   }
 
   setMicEnabled(on: boolean): void {
@@ -246,6 +255,7 @@ export class VirtualDevice {
     }
     if (!on) this.stopTalking(true)
     this.set({ micEnabled: on })
+    this.wakeWord.enable(on)
   }
 
   /** 按住说话：不等 VAD，直接开始一句。 */

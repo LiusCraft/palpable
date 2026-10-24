@@ -12,6 +12,7 @@
     { "$ref": "#/$defs/Mcp" },
     { "$ref": "#/$defs/HelloAck" },
     { "$ref": "#/$defs/AudioDownlink" },
+    { "$ref": "#/$defs/WakeConfig" },
     { "$ref": "#/$defs/Light" },
     { "$ref": "#/$defs/Haptic" },
     { "$ref": "#/$defs/Sound" },
@@ -129,6 +130,16 @@
         "type": { "const": "audio.downlink" },
         "sample_rate": { "enum": [16000, 24000] },
         "frame_duration": { "enum": [20, 40, 60], "description": "单帧毫秒数" }
+      }
+    },
+    "WakeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "words"],
+      "description": "设备本地唤醒词引擎要识别的词（孩子给小伙伴起的名字）。上线时和起名后下发，整体替换旧的；空数组表示暂无唤醒词。",
+      "properties": {
+        "type": { "const": "wake.config" },
+        "words": { "type": "array", "maxItems": 4, "items": { "type": "string", "minLength": 1, "maxLength": 32 } }
       }
     },
     "Light": {

@@ -95,6 +95,8 @@ func TestEncodedDownstreamMatchesSchema(t *testing.T) {
 	msgs := []Message{
 		&HelloAck{Type: TypeHelloAck, SessionID: "s-1", AudioParams: ap},
 		&AudioDownlink{Type: TypeAudioDownlink, SampleRate: 24000, FrameDuration: 60},
+		&WakeConfig{Type: TypeWakeConfig, Words: []string{"小兔"}},
+		&WakeConfig{Type: TypeWakeConfig, Words: []string{}},
 		&Light{Type: TypeLight, State: "listening", Color: "#7fb8ff", Pattern: "breathe"},
 		&Haptic{Type: TypeHaptic, Pattern: "tap"},
 		&Sound{Type: TypeSound, Name: "connected"},
@@ -133,6 +135,7 @@ func TestMsgType(t *testing.T) {
 		{&Location{}, TypeLocation},
 		{&HelloAck{}, TypeHelloAck},
 		{&AudioDownlink{}, TypeAudioDownlink},
+		{&WakeConfig{}, TypeWakeConfig},
 		{&Light{}, TypeLight},
 		{&Haptic{}, TypeHaptic},
 		{&Sound{}, TypeSound},

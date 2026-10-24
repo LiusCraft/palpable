@@ -27,6 +27,7 @@ const (
 	TypeMcp           = "mcp"
 	TypeHelloAck      = "hello.ack"
 	TypeAudioDownlink = "audio.downlink"
+	TypeWakeConfig    = "wake.config"
 	TypeLight         = "light"
 	TypeHaptic        = "haptic"
 	TypeSound         = "sound"
@@ -119,6 +120,12 @@ type AudioDownlink struct {
 	FrameDuration int    `json:"frame_duration"`
 }
 
+// WakeConfig 告诉设备本地唤醒词引擎该听什么词；整体替换旧的。
+type WakeConfig struct {
+	Type  string   `json:"type"`
+	Words []string `json:"words"`
+}
+
 type Light struct {
 	Type    string `json:"type"`
 	State   string `json:"state"`
@@ -180,6 +187,7 @@ func (*Proximity) MsgType() string     { return TypeProximity }
 func (*Location) MsgType() string      { return TypeLocation }
 func (*HelloAck) MsgType() string      { return TypeHelloAck }
 func (*AudioDownlink) MsgType() string { return TypeAudioDownlink }
+func (*WakeConfig) MsgType() string    { return TypeWakeConfig }
 func (*Light) MsgType() string         { return TypeLight }
 func (*Haptic) MsgType() string        { return TypeHaptic }
 func (*Sound) MsgType() string         { return TypeSound }

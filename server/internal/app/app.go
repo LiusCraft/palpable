@@ -234,6 +234,7 @@ func (a *App) connect(s *gateway.Session) {
 	}
 	p = a.applyDemo(ctx, p)
 	a.publish(world.Event{Kind: "device", Device: d, Name: p.DollName, Skin: p.Skin})
+	a.sendWakeWords(d, p.DollName)
 	if p.Stage == device.StageNamed {
 		// 上次起好名字但交棒没完成：重试，不让孩子重新起名。
 		if hp, err := a.devices.Handoff(ctx, d); err != nil {
@@ -364,6 +365,14 @@ func (a *App) send(d id.DeviceID, msgs ...protocol.Message) {
 			return
 		}
 	}
+}
+
+// sendWakeWords 把小伙伴的名字作为唤醒词交给设备本地引擎；还没起名时没有可听的词，不下发。
+func (a *App) sendWakeWords(d id.DeviceID, name string) {
+	if name == "" {
+		return
+	}
+	a.send(d, &protocol.WakeConfig{Type: protocol.TypeWakeConfig, Words: []string{name}})
 }
 
 // dollName 返回设备小伙伴的名字，供提示与展示；还没起名时为空。
@@ -584,6 +593,7 @@ func (a *App) deviceEvents(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case e := <-a.devices.Subscribe():
+			a.sendWakeWords(e.Device, e.DollName)
 			go a.handoff(e)
 		case d := <-a.devices.EnrollAttempts():
 			ch, _ := a.enrolled.LoadOrStore(d, make(chan struct{}))

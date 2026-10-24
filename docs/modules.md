@@ -134,7 +134,7 @@ func (w *World) Publish(e Event) // 由 app 调用；慢观察者丢事件，不
 
 | 设备事件 | 调用 |
 | --- | --- |
-| 连接建立（`hello` 已通过） | `device.Ensure` → `bridge/linx.Open`；`stage=fresh` 时 `Say` 由引导智能体欢迎并请孩子起名；`stage=named` 时直接 `Handoff`。失败时下发 `error` |
+| 连接建立（`hello` 已通过） | `device.Ensure` → 已起名则下发 `wake.config` → `bridge/linx.Open`；`stage=fresh` 时 `Say` 由引导智能体欢迎并请孩子起名；`stage=named` 时直接 `Handoff`。失败时下发 `error` |
 | `mic.state`、`wake`、音频帧 | `voice` |
 | `proximity` | `relation.OnProximity` |
 | `location` | `zone.OnLocation`；同时 `world.Publish` |
@@ -177,7 +177,7 @@ func (w *World) Publish(e Event) // 由 app 调用；慢观察者丢事件，不
 | 在频道里，刚发出 `wake` | AI（一个回合） | AI 说完（`tts stop`）后 1.5 秒内没有新语音，回到频道 |
 | 不在频道，且 AI 不可用 | 丢弃 | 开通失败或灵矽断线时 |
 
-`wake` 由设备本地唤醒词引擎产生（Web 用点击玩偶或语音唤醒）。服务端不靠识别文本判断"是否在叫小伙伴"，这样频道里的闲聊不会被送给 AI。
+`wake` 由设备本地唤醒词引擎产生（Web 用点击玩偶，或 `device-sim/wake-word.ts` 听到唤醒词）；要听的词是孩子给小伙伴起的名字，由服务端经 `wake.config` 在上线和起名后下发，还没起名时设备只能点玩偶唤醒。服务端不靠识别文本判断"是否在叫小伙伴"，这样频道里的闲聊不会被送给 AI。
 
 **发言权**
 - 设备用 `mic.state start/stop` 圈出一句话（设备端 VAD 决定）。服务端另有看门狗：路由到频道的音频 600ms 没有新帧，也视为说完。
@@ -732,7 +732,7 @@ func OwnerDevice(p ParticipantID) DeviceID // 好友判断与家长控制都以�
 | 模块 | 类别 | 职责 |
 | --- | --- | --- |
 | `shared` | — | 生成的协议类型、WS 客户端、zustand store |
-| `device-sim` | 设备 | 虚拟设备：麦克风与扬声器、设备端 VAD 与 `mic.state`、`wake`、`proximity`、`location`、按 `audio.downlink` 解码、设备端 MCP 服务（`self.light.set`、`self.haptic.pulse`、`self.camera.take_photo`）。一个页面就是一台设备（`client.ts` 用 Web Locks 认领浏览器里上次那只，被别的页面占着就新开一只）；放上桌面通电后默认打开麦克风，靠设备端 VAD 判断说话，不做按键。摄像头与 BLE 由 `environment` 模拟：场景提供"眼前的画面"，靠近强度由地图距离换算 |
+| `device-sim` | 设备 | 虚拟设备：麦克风与扬声器、设备端 VAD 与 `mic.state`、本地唤醒词与 `wake`、`proximity`、`location`、按 `audio.downlink` 解码、设备端 MCP 服务（`self.light.set`、`self.haptic.pulse`、`self.camera.take_photo`）。一个页面就是一台设备（`client.ts` 用 Web Locks 认领浏览器里上次那只，被别的页面占着就新开一只）；放上桌面通电后默认打开麦克风，靠设备端 VAD 判断说话，不做按键。摄像头与 BLE 由 `environment` 模拟：场景提供"眼前的画面"，靠近强度由地图距离换算 |
 | `plush` | 设备表现 | 玩偶与灯带，响应 `light`、`speaker.state`、`haptic` |
 | `site` | Web 展示 | 官网首页（`#/`）：风景大图（`public/hero-bg.png`）上叠 3D 玩偶一家，下面是特点、三个动作、玩法、为什么不是手机、家长放心，3D 按需加载；体验入口 `#/play`，家长端 `#/parent` |
 | `scenes/world` | Web 展示 | 第一人称控制器（WASD 走路、鼠标锁定后像 FPS 一样直接转头、Esc 放开鼠标、碰撞、胸前的玩偶；`Interactor`：站在互动点上按 E），房间与公园共用 |

@@ -12,6 +12,7 @@ export type PalpableMessage =
   | Mcp
   | HelloAck
   | AudioDownlink
+  | WakeConfig
   | Light
   | Haptic
   | Sound
@@ -1074,6 +1075,16 @@ export interface AudioDownlink {
    * 单帧毫秒数
    */
   frame_duration: 20 | 40 | 60;
+}
+/**
+ * 设备本地唤醒词引擎要识别的词（孩子给小伙伴起的名字）。上线时和起名后下发，整体替换旧的；空数组表示暂无唤醒词。
+ */
+export interface WakeConfig {
+  type: "wake.config";
+  /**
+   * @maxItems 4
+   */
+  words: [] | [string] | [string, string] | [string, string, string] | [string, string, string, string];
 }
 export interface Light {
   type: "light";

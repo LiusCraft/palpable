@@ -408,3 +408,41 @@ func TestNamingHandsOffToStyleAgent(t *testing.T) {
 		t.Fatalf("profile after handoff = %+v", p)
 	}
 }
+
+func TestWakeWordsFollowTheDollName(t *testing.T) {
+	f := &fakeAI{calls: make(chan string, 32)}
+	a := mustApp(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.Start(ctx)
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	ws := connect(t, srv, mac)
+	f.wantPrefix(t, "open ")
+	f.wantPrefix(t, "say ")
+
+	// 还没起名时不下发，所以起名后读到的第一条就是 wake.config。
+	f.onMCP(mac, json.RawMessage(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"self.profile.set_names","arguments":{"doll_name":"小龙","kid_name":"朵朵"}}}`))
+	if got := readText(t, ws); got != `{"type":"wake.config","words":["小龙"]}` {
+		t.Fatalf("after naming = %s", got)
+	}
+}
+
+func TestWakeWordsSentOnReconnect(t *testing.T) {
+	f := &fakeAI{calls: make(chan string, 32)}
+	a := mustApp(t, f)
+	ctx := context.Background()
+	const other id.DeviceID = "02:00:00:00:00:09"
+	if _, err := a.devices.Ensure(ctx, device.DeviceInfo{MAC: string(other), Skin: "dragon"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.devices.SetNames(ctx, other, "小兔", "朵朵"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	ws := connect(t, srv, other)
+	if got := readText(t, ws); got != `{"type":"wake.config","words":["小兔"]}` {
+		t.Fatalf("on connect = %s", got)
+	}
+}
