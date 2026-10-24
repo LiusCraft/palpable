@@ -108,6 +108,7 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	rel.SetAutoConfirm(!d.demo.FriendNeedsApproval)
 	chans, err := channel.New(ctx, d.store.Groups())
 	if err != nil {
 		return nil, err
@@ -400,7 +401,10 @@ func (a *App) onRelation(ctx context.Context, e relation.Event) {
 				&protocol.Sound{Type: protocol.TypeSound, Name: "friend"})
 		case relation.Confirmed:
 			state.Event = "confirmed"
-			a.send(d, state, &protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "long"})
+			// 贴一贴自动成为好友时这是孩子唯一的反馈，所以和"请求"一样要有提示音。
+			a.send(d, state,
+				&protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "double_tap"},
+				&protocol.Sound{Type: protocol.TypeSound, Name: "friend"})
 			a.recordMet(ctx, d, other, "")
 		case relation.Removed:
 			state.Event = "removed"

@@ -173,6 +173,31 @@ func TestConfirmRemoveAndRepropose(t *testing.T) {
 	}
 }
 
+func TestAutoConfirmOnProximity(t *testing.T) {
+	r, clk, _ := newRelations(t)
+	r.SetAutoConfirm(true)
+	ctx := context.Background()
+	bothNear(t, r, clk, 5, 0.9)
+	e := nextEvent(t, r)
+	if e.Kind != Confirmed || e.Friendship.Status != StatusConfirmed || e.Friendship.ConfirmedBy != AutoGuardian {
+		t.Fatalf("event = %+v", e)
+	}
+	if !friends(t, r, a, b) {
+		t.Fatal("auto-confirmed pair must be friends without a parent click")
+	}
+	noEvent(t, r)
+
+	// 解除后再次贴近，同样直接生效并再次通知家长。
+	if err := r.Remove(ctx, a, b); err != nil {
+		t.Fatal(err)
+	}
+	nextEvent(t, r)
+	bothNear(t, r, clk, 5, 0.9)
+	if e := nextEvent(t, r); e.Kind != Confirmed || e.Friendship.ConfirmedBy != AutoGuardian || !friends(t, r, a, b) {
+		t.Fatalf("event = %+v", e)
+	}
+}
+
 func TestFilterFriendsAndAgents(t *testing.T) {
 	r, clk, _ := newRelations(t)
 	ctx := context.Background()

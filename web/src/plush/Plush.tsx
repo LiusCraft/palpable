@@ -1,4 +1,4 @@
-import { useFrame } from '@react-three/fiber'
+import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { useRef } from 'react'
 import type { Group, Mesh, MeshStandardMaterial } from 'three'
 import type { LightState } from '../shared/protocol.gen'
@@ -13,7 +13,7 @@ export interface PlushProps {
   color?: string
   speaking?: boolean
   shakeAt?: number
-  onTap?: () => void
+  onTap?: (e: ThreeEvent<MouseEvent>) => void
   position?: [number, number, number]
   scale?: number
 }
@@ -25,7 +25,7 @@ function Ear({ look, side }: { look: SkinLook; side: 1 | -1 }) {
         <group position={[0.28 * side, 0.62, 0]} rotation={[0, 0, -0.18 * side]}>
           <mesh scale={[0.13, 0.45, 0.09]}>
             <sphereGeometry args={[1, 24, 24]} />
-            <meshStandardMaterial color={look.body} roughness={0.95} />
+            <meshStandardMaterial color={(look.accent ?? look.body)} roughness={0.95} />
           </mesh>
           <mesh position={[0, 0, 0.05]} scale={[0.07, 0.33, 0.04]}>
             <sphereGeometry args={[1, 16, 16]} />
@@ -37,7 +37,7 @@ function Ear({ look, side }: { look: SkinLook; side: 1 | -1 }) {
       return (
         <mesh position={[0.32 * side, 0.45, 0]} rotation={[0, 0, -0.35 * side]}>
           <coneGeometry args={[0.16, 0.3, 4]} />
-          <meshStandardMaterial color={look.body} roughness={0.95} />
+          <meshStandardMaterial color={(look.accent ?? look.body)} roughness={0.95} />
         </mesh>
       )
     case 'spike':
@@ -52,7 +52,7 @@ function Ear({ look, side }: { look: SkinLook; side: 1 | -1 }) {
         <group position={[0.36 * side, 0.42, 0]}>
           <mesh>
             <sphereGeometry args={[0.16, 24, 24]} />
-            <meshStandardMaterial color={look.body} roughness={0.95} />
+            <meshStandardMaterial color={(look.accent ?? look.body)} roughness={0.95} />
           </mesh>
           <mesh position={[0, 0, 0.08]} scale={[1, 1, 0.5]}>
             <sphereGeometry args={[0.09, 16, 16]} />
@@ -92,7 +92,7 @@ export function Plush({ skin, light, color, speaking, shakeAt = 0, onTap, positi
       scale={scale}
       onClick={(e) => {
         e.stopPropagation()
-        onTap?.()
+        onTap?.(e)
       }}
       onPointerOver={() => onTap && (document.body.style.cursor = 'pointer')}
       onPointerOut={() => (document.body.style.cursor = '')}
@@ -109,13 +109,13 @@ export function Plush({ skin, light, color, speaking, shakeAt = 0, onTap, positi
       {[-1, 1].map((s) => (
         <mesh key={`arm${s}`} position={[0.55 * s, -0.5, 0.12]} scale={[0.17, 0.26, 0.17]} rotation={[0, 0, 0.5 * s]}>
           <sphereGeometry args={[1, 20, 20]} />
-          <meshStandardMaterial color={look.body} roughness={0.97} />
+          <meshStandardMaterial color={(look.accent ?? look.body)} roughness={0.97} />
         </mesh>
       ))}
       {[-1, 1].map((s) => (
         <mesh key={`leg${s}`} position={[0.3 * s, -1.08, 0.22]} scale={[0.2, 0.14, 0.24]}>
           <sphereGeometry args={[1, 20, 20]} />
-          <meshStandardMaterial color={look.body} roughness={0.97} />
+          <meshStandardMaterial color={(look.accent ?? look.body)} roughness={0.97} />
         </mesh>
       ))}
 

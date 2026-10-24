@@ -1,25 +1,21 @@
 import { useEffect, useState } from 'react'
 import { useStore } from 'zustand'
 import type { VirtualDevice } from '../../device-sim/device'
-import { useDevices } from '../../device-sim/devices'
 import { setSceneDescriber } from '../../device-sim/environment'
 import { sayToCompanion } from '../../map/demoTool'
 import { pairKey, useWorld } from '../../map/world'
 import { copy } from '../../ui/copy'
-import { Button, Chip, Wave } from '../../ui/components'
-import { useDemo } from '../demo'
-import { MicControls } from '../desk/MicControls'
+import { Button, Chip } from '../../ui/components'
 import { inside } from './geo'
 import { ParkMap } from './ParkMap'
+import { ParkWalk } from './ParkWalk'
 import { useParkSensors, usePositions } from './sensors'
 
-// 公园：区域频道、陌生人屏蔽、贴近成为好友、好友互相听见都在这里发生。
+// 公园：孩子第一人称走在公园里。区域频道、陌生人屏蔽、贴近成为好友、好友互相听见都在这里发生。
+// 这里的面板只是"画面上的提示"：规则由服务端裁决，设备端不做业务判断。
 
-export function ParkStage() {
+export function ParkStage({ device }: { device: VirtualDevice }) {
   useParkSensors()
-  const { devices, active } = useDevices()
-  const viewing = useDemo((s) => s.viewing)
-  const viewer = devices.find((d) => d.mac === (viewing ?? active)) ?? devices[0]
 
   useEffect(() => {
     setSceneDescriber((mac) => {
@@ -30,23 +26,17 @@ export function ParkStage() {
     })
   }, [])
 
-  if (!viewer) return null
   return (
-    <div className="grid gap-4 xl:grid-cols-[1fr_260px]">
-      <div className="relative overflow-hidden rounded-2xl ring-1 ring-emerald-100">
-        <div className="aspect-[860/660] w-full">
-          <ParkMap viewer={viewer.mac} />
+    <div className="absolute inset-0">
+      <ParkWalk device={device} />
+      <div className="pointer-events-none absolute bottom-3 right-3 w-44 overflow-hidden rounded-xl opacity-90 shadow-lg ring-2 ring-white/80">
+        <div className="aspect-[860/660]">
+          <ParkMap viewer={device.mac} />
         </div>
-        <ZonePrompt device={viewer} />
-        <Toast device={viewer} />
-        <p className="pointer-events-none absolute bottom-2 left-3 rounded-full bg-white/80 px-3 py-1 text-xs text-slate-500">{copy.park.dragHint}</p>
       </div>
-      <Members device={viewer} />
-      <div className="grid gap-3 sm:grid-cols-2 xl:col-span-2">
-        {devices.map((d) => (
-          <KidCard key={d.mac} device={d} />
-        ))}
-      </div>
+      <ZonePrompt device={device} />
+      <Toast device={device} />
+      <Members device={device} />
     </div>
   )
 }
@@ -118,8 +108,8 @@ function Members({ device }: { device: VirtualDevice }) {
   const myName = world.devices[s.mac]?.name
 
   return (
-    <div className="rounded-2xl bg-white p-4 ring-1 ring-sky-100">
-      <div className="mb-3 flex items-baseline gap-1">
+    <div className="absolute left-3 top-14 w-56 rounded-2xl glass p-3 text-sm">
+      <div className="mb-2 flex items-baseline gap-1">
         <span className="font-semibold text-[#1d3557]">{copy.park.membersTitle}</span>
         <span className="text-xs text-slate-400">{copy.park.membersSub}</span>
       </div>
@@ -155,55 +145,7 @@ function Members({ device }: { device: VirtualDevice }) {
         })}
       </ul>
       {Object.values(s.friends).some((f) => f.status === 'pending') && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">有新朋友等爸爸妈妈在家长端确认 →</p>
-      )}
-    </div>
-  )
-}
-
-/** 一个小朋友的玩偶卡片：谁在说话、所在频道、麦克风。对应效果图第 5 格。 */
-function KidCard({ device }: { device: VirtualDevice }) {
-  const s = useStore(device.store)
-  const name = useWorld((w) => w.devices[s.mac]?.name)
-  const { view } = useDemo()
-  const pink = s.skin === 'rabbit'
-  return (
-    <div className={`rounded-2xl p-4 ring-1 ${pink ? 'bg-pink-50/60 ring-pink-100' : 'bg-sky-50/60 ring-sky-100'}`}>
-      <div className="flex items-center justify-between">
-        <button type="button" className="font-semibold text-[#1d3557]" onClick={() => view(s.mac)}>
-          {name || '玩偶'} <span className="text-xs font-normal text-slate-400">{s.skin}</span>
-        </button>
-        <div className="flex gap-1">
-          <Chip tone={s.link === 'online' ? 'green' : 'gray'}>{copy.link[s.link]}</Chip>
-          {s.channel && <Chip tone="green">{s.channel.name}</Chip>}
-        </div>
-      </div>
-      <div className="mt-3 min-h-10">
-        {s.source === 'peer' && s.peer ? (
-          <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
-            <Wave active tone="pink" />
-            {s.peer.name}正在说话
-          </div>
-        ) : s.talking ? (
-          <div className={`inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm text-white ${pink ? 'bg-pink-400' : 'bg-[#2f6bff]'}`}>
-            <Wave active tone={pink ? 'pink' : 'blue'} />
-            我在说…
-          </div>
-        ) : s.source === 'ai' ? (
-          <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
-            <Wave active />
-            小伙伴在说
-          </div>
-        ) : (
-          <span className="text-sm text-slate-400">{copy.light[s.light]}</span>
-        )}
-      </div>
-      {s.link === 'offline' ? (
-        <Button className="mt-2" onClick={() => device.connect()}>
-          连接
-        </Button>
-      ) : (
-        <MicControls device={device} />
+        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">有新朋友在等爸爸妈妈确认</p>
       )}
     </div>
   )

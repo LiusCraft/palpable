@@ -17,6 +17,7 @@ export interface Friend {
   device_id: string
   name: string
   status: 'pending' | 'confirmed'
+  auto: boolean
   online: boolean
   since: string
 }

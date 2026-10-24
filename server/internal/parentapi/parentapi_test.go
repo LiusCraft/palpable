@@ -122,6 +122,22 @@ func TestAuthAndOwnership(t *testing.T) {
 	}
 }
 
+func TestAutoConfirmedFriendIsFlagged(t *testing.T) {
+	g := setup(t)
+	rid := g.reqs[[2]id.DeviceID{kidA, kidB}]
+	f, _ := g.s.Friendships().Get(context.Background(), rid)
+	f.Status, f.ConfirmedBy = int(relation.StatusConfirmed), relation.AutoGuardian
+	if err := g.s.Friendships().Update(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	_, body := g.do(t, "GET", "/api/kids/"+string(kidA)+"/friends", token)
+	var fs []Friend
+	_ = json.Unmarshal(body, &fs)
+	if len(fs) != 1 || fs[0].Status != "confirmed" || !fs[0].Auto {
+		t.Fatalf("friends = %s", body)
+	}
+}
+
 func TestFriendsConfirmRemoveGroupsDigest(t *testing.T) {
 	g := setup(t)
 	ctx := context.Background()

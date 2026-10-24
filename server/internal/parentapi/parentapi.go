@@ -94,6 +94,7 @@ type Friend struct {
 	DeviceID  id.DeviceID `json:"device_id"`
 	Name      string      `json:"name"`
 	Status    string      `json:"status"` // pending / confirmed
+	Auto      bool        `json:"auto"`   // 靠近后自动成为好友，家长只是被通知
 	Online    bool        `json:"online"`
 	Since     time.Time   `json:"since"`
 }
@@ -169,7 +170,7 @@ func (a *API) friends(w http.ResponseWriter, r *http.Request, _ id.GuardianID, k
 		if p, err := a.devices.Profile(r.Context(), other); err == nil {
 			name = p.DollName
 		}
-		out = append(out, Friend{RequestID: f.ID, DeviceID: other, Name: name, Status: status, Online: a.online(other), Since: f.CreatedAt})
+		out = append(out, Friend{RequestID: f.ID, DeviceID: other, Name: name, Status: status, Auto: f.ConfirmedBy == relation.AutoGuardian, Online: a.online(other), Since: f.CreatedAt})
 	}
 	writeJSON(w, out)
 }

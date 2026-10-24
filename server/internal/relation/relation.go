@@ -1,5 +1,5 @@
 // Package relation 管理好友关系：状态机、"两台设备靠近"转为待确认请求、好友查询。
-// 谁有权确认由 parentapi 鉴权后决定；这里只保证只有 Confirm 能让两台设备成为好友。
+// 谁有权确认由 parentapi 鉴权后决定；未开启自动确认时，只有 Confirm 能让两台设备成为好友。
 package relation
 
 import (
@@ -24,6 +24,9 @@ const (
 
 	eventBuffer = 256
 )
+
+// AutoGuardian 记在 ConfirmedBy 上，表示这条好友关系是靠近后自动生效、未经家长点确认。
+const AutoGuardian id.GuardianID = "auto"
 
 var (
 	ErrNotFound   = errors.New("relation: friend request not found")
@@ -91,6 +94,9 @@ type Relations struct {
 	now    func() time.Time
 	events chan Event
 
+	// 开启后"靠近"直接成为好友，不等家长确认；家长端凭 ConfirmedBy == AutoGuardian 得知并可随时解除。
+	auto bool
+
 	// 好友快照：AreFriends 在热路径上，读不加锁，写时整份替换。
 	friends atomic.Pointer[map[pair]struct{}]
 
@@ -119,6 +125,9 @@ func New(ctx context.Context, repo store.FriendshipRepo) (*Relations, error) {
 }
 
 func (r *Relations) Subscribe() <-chan Event { return r.events }
+
+// SetAutoConfirm 须在开始上报靠近之前调用。
+func (r *Relations) SetAutoConfirm(on bool) { r.auto = on }
 
 // AreFriends 按参与者所属设备判断；热路径，不访问存储。
 func (r *Relations) AreFriends(_ context.Context, a, b id.ParticipantID) (bool, error) {
@@ -213,10 +222,15 @@ func (r *Relations) propose(ctx context.Context, x, y id.DeviceID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	status, by, kind := StatusPending, id.GuardianID(""), Proposed
+	if r.auto {
+		status, by, kind = StatusConfirmed, AutoGuardian, Confirmed
+	}
+
 	f, err := r.repo.ByPair(ctx, x, y)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		f = store.Friendship{ID: id.New(), A: x, B: y, Status: int(StatusPending), CreatedAt: r.now()}
+		f = store.Friendship{ID: id.New(), A: x, B: y, Status: int(status), ConfirmedBy: by, CreatedAt: r.now()}
 		if err := r.repo.Create(ctx, f); err != nil {
 			return fmt.Errorf("propose %s/%s: %w", x, y, err)
 		}
@@ -226,12 +240,15 @@ func (r *Relations) propose(ctx context.Context, x, y id.DeviceID) error {
 	case Status(f.Status) != StatusRemoved:
 		return nil // 已是好友或已有未处理请求
 	default:
-		f.Status, f.ConfirmedBy = int(StatusPending), ""
+		f.Status, f.ConfirmedBy = int(status), by
 		if err := r.repo.Update(ctx, f); err != nil {
 			return fmt.Errorf("propose %s/%s: %w", x, y, err)
 		}
 	}
-	r.emit(Event{Kind: Proposed, Friendship: fromRecord(f)})
+	if status == StatusConfirmed {
+		r.setFriend(pair{f.A, f.B}, true)
+	}
+	r.emit(Event{Kind: kind, Friendship: fromRecord(f)})
 	return nil
 }
 
