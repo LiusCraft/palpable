@@ -50,7 +50,7 @@ export function ParkMap({ viewer }: { viewer: string }) {
   const zoneTop = zone ? toXY(zone.polygon[0]) : null
 
   return (
-    <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} className="h-full w-full select-none">
+    <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} className="h-full w-full select-none" data-testid="park-map" aria-label="公园地图">
       <defs>
         <linearGradient id="land" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#eef6e4" />
