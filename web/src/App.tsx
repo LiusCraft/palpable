@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from 'zustand'
 import type { VirtualDevice } from './device-sim/device'
 import { useDevices } from './device-sim/devices'
@@ -10,6 +10,7 @@ import { Skins } from './scenes/extras/Skins'
 import { Desk } from './scenes/desk/Desk'
 import { ParkStage } from './scenes/park/ParkStage'
 import { Unbox } from './scenes/unbox/Unbox'
+import { Showcase } from './scenes/showcase/Showcase'
 import { copy } from './ui/copy'
 import { Button, Card, StepBadge, StepHeader } from './ui/components'
 
@@ -18,11 +19,14 @@ const SCENE_OF_STEP: Scene[] = ['unbox', 'desk', 'park', 'park', 'park']
 export default function App() {
   const { devices, active } = useDevices()
   const { scene, viewing, setScene, view } = useDemo()
+  const [showcase, setShowcase] = useState(true)
   useEffect(connectWorld, [])
 
   const device = devices.find((d) => d.mac === (viewing ?? active)) ?? devices[0]
   const parkStep = useParkStep(device)
   const step = scene === 'unbox' ? 0 : scene === 'desk' ? 1 : parkStep
+
+  if (showcase) return <Showcase onAdopt={() => { setScene('desk'); setShowcase(false) }} />
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-16 pt-5 sm:px-6">

@@ -734,11 +734,14 @@ func OwnerDevice(p ParticipantID) DeviceID // 好友判断与家长控制都以�
 | `shared` | — | 生成的协议类型、WS 客户端、zustand store |
 | `device-sim` | 设备 | 虚拟设备：麦克风与扬声器、设备端 VAD 与 `mic.state`、`wake`、`proximity`、`location`、按 `audio.downlink` 解码、设备端 MCP 服务（`self.light.set`、`self.haptic.pulse`、`self.camera.take_photo`）。一个页面可开多只（`VirtualDevice`，各自一条连接），物理麦克风同一时刻只交给一只。摄像头与 BLE 由 `environment` 模拟：场景提供"眼前的画面"，靠近强度由地图距离换算 |
 | `plush` | 设备表现 | 玩偶与灯带，响应 `light`、`speaker.state`、`haptic` |
+| `scenes/showcase` | Web 展示 | 宠物陈列入口：仅切换文案、主题和素材，文案下方领养按钮进入命名认主，不改设备档案或协议 |
 | `scenes/unbox` | Web 展示 | 开箱 |
 | `scenes/desk` | Web 展示 | 桌面场景、起名引导的画面 |
 | `scenes/park` | Web 展示 | 公园，多个小朋友走动、靠近，提供场景截图 |
 | `map` | Web 展示 | 地图，显示位置、谁在说话、"已屏蔽"（订阅 `/world`） |
 | `parent-sim` | Web 展示 | 手机窗口，调用 `/api` |
 | `ui` | Web 展示 | 儿童友好的统一文案表与提示音 |
+
+`scenes/showcase` 使用导航、主视觉、商品台三行布局：顶部以低透明度 `PALPITABLE` 大字压印，主视觉左侧是收紧行高与间距的文案和「领养伙伴」，右侧透明 PNG 角色脚踩在奶白色展示台顶边上，中间不挂机械爪、抓取按钮或左右箭头。展示台并排 6 个盲盒图（统一 WebP，宽屏六列、窄屏三列），点击只切换展示。宽屏无横向滚动；低高度窗口按压缩规则收缩字号与间距，不通过裁剪隐藏内容。宠物切换即时更新内容，背景与主题色走 CSS 变量、以 `background-color` 过渡。图片路径逐角色显式配置，猫兔素材按实际图片内容映射，不按文件名推断。展示名仅属于商品内容，不替代服务端命名认主。
 
 `device-sim` 不得读取其他虚拟设备的状态；同一页面里的多个小朋友窗口也只通过服务端互通。
