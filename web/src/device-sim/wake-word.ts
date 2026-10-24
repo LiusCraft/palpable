@@ -86,7 +86,9 @@ export class WakeWordEngine {
     rec.interimResults = true
     rec.onresult = (ev) => {
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        if (!matchesWakeWord(ev.results[i][0].transcript, this.words)) continue
+        const heard = ev.results[i][0].transcript
+        console.debug('[wake-word] heard', heard, 'listening for', this.words)
+        if (!matchesWakeWord(heard, this.words)) continue
         const now = Date.now()
         if (now - this.lastHit < COOLDOWN_MS) return
         this.lastHit = now
@@ -95,6 +97,8 @@ export class WakeWordEngine {
       }
     }
     rec.onerror = (ev) => {
+      // no-speech 是静默时的常态；其余错误（尤其 network：浏览器连不上识别服务）要让人看得见。
+      if (ev.error !== 'no-speech') console.warn('[wake-word] recognition error:', ev.error)
       // 没有麦克风权限时不再重试，其余错误（无语音、网络抖动）等 onend 续上。
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') this.want = false
     }
@@ -103,6 +107,7 @@ export class WakeWordEngine {
       if (this.want) this.timer = window.setTimeout(() => this.restart(), RESTART_MS)
     }
     this.rec = rec
+    console.debug('[wake-word] listening for', this.words)
     this.begin(rec)
   }
 
