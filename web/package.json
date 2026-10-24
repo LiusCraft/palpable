@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "gen:protocol": "node scripts/gen-protocol.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:smoke": "playwright test"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",
@@ -19,6 +20,7 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",

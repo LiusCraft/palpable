@@ -70,6 +70,8 @@ export function ParkMap({ viewer }: { viewer: string }) {
   return (
     <svg
       ref={svg}
+      data-testid="park-map"
+      aria-label="公园地图"
       viewBox={`0 0 ${MAP_W} ${MAP_H}`}
       className="h-full w-full touch-none select-none"
       onPointerMove={(e) => {

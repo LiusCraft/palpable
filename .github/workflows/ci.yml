@@ -49,6 +49,14 @@ jobs:
       - name: Run project checks
         run: make check
 
+      - name: Install Playwright browser
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser smoke test
+        working-directory: web
+        run: pnpm run test:smoke
+
       - name: Run race detector
         working-directory: server
         run: go test -race ./internal/...

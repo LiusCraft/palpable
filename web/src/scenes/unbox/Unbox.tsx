@@ -159,8 +159,15 @@ export function Unbox({ skin, onDone }: { skin: string; onDone: () => void }) {
       </Canvas>
 
       {phase === 'closed' && (
-        <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
-          <div className="rounded-full bg-white/80 px-4 py-1 text-sm text-slate-600 shadow-sm">{copy.unbox.hint}</div>
+        <div className="absolute inset-x-0 top-4 flex justify-center">
+          <button
+            type="button"
+            aria-label="打开盒子"
+            onClick={() => setPhase('opening')}
+            className="rounded-full bg-white/90 px-4 py-1 text-sm text-slate-600 shadow-sm transition hover:bg-white"
+          >
+            {copy.unbox.hint}
+          </button>
         </div>
       )}
 

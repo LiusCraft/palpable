@@ -1,0 +1,5 @@
+addr: ":8080"
+db_path: ":memory:"
+
+demo:
+  world: true
