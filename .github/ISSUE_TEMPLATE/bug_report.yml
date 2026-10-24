@@ -1,0 +1,26 @@
+name: Bug report
+description: 报告一个可以复现的问题
+title: "bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 问题现象
+      description: 请描述实际发生了什么，以及期望发生什么。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请提供最小复现步骤；不要粘贴密钥、声纹或儿童个人信息。
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      placeholder: macOS 14 / Chrome 140 / commit SHA
+    validations:
+      required: true

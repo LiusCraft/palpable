@@ -49,6 +49,10 @@ jobs:
       - name: Run project checks
         run: make check
 
+      - name: Run race detector
+        working-directory: server
+        run: go test -race ./internal/...
+
       - name: Read total coverage
         id: coverage
         working-directory: server

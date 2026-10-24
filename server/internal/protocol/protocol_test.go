@@ -203,6 +203,17 @@ func TestDecodeUpstreamRejectsBadInput(t *testing.T) {
 	}
 }
 
+func FuzzDecodeUpstream(f *testing.F) {
+	f.Add([]byte(`{"type":"wake","source":"touch"}`))
+	f.Add([]byte(`{"type":"location","lat":31.2,"lng":121.5}`))
+	f.Add([]byte(`{"type":"hello","device_id":"02:00:00:00:00:01","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`))
+	f.Add([]byte(`not json`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = DecodeUpstream(data)
+	})
+}
+
 func isUpstream(t string) bool {
 	switch t {
 	case TypeHello, TypeWake, TypeMicState, TypeProximity, TypeLocation, TypeMcp:

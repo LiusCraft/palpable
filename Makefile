@@ -1,4 +1,4 @@
-.PHONY: gen gen-check build lint test vet cover check dev-server dev-web
+.PHONY: gen gen-check fmt-check build lint test vet cover check dev-server dev-web
 
 # PR 要求的后端单测覆盖率下限
 MIN_COVERAGE ?= 90
@@ -6,6 +6,14 @@ MIN_COVERAGE ?= 90
 # 由 protocol/palpable.schema.json 生成前端协议类型
 gen:
 	cd web && pnpm run gen:protocol
+
+fmt-check:
+	@files="$$(gofmt -l server)"; \
+	if [ -n "$$files" ]; then \
+		echo "以下 Go 文件未经过 gofmt:"; \
+		echo "$$files"; \
+		exit 1; \
+	fi
 
 gen-check: gen
 	@git diff --exit-code -- web/src/shared/protocol.gen.ts
@@ -30,7 +38,7 @@ cover:
 	cd server && ../.github/scripts/check-coverage.sh coverage.out $(MIN_COVERAGE)
 
 # 每次改动后的完整检查
-check: gen-check lint vet cover build
+check: gen-check fmt-check lint vet cover build
 
 dev-server:
 	cd server && go run ./cmd/palpabled
