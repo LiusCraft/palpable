@@ -1,4 +1,4 @@
-.PHONY: gen fmt-check build lint test vet cover check dev-server dev-web
+.PHONY: gen gen-check fmt-check build lint test vet cover check dev-server dev-web
 
 # PR 要求的后端单测覆盖率下限
 MIN_COVERAGE ?= 90
@@ -14,6 +14,9 @@ fmt-check:
 		echo "$$files"; \
 		exit 1; \
 	fi
+
+gen-check: gen
+	@git diff --exit-code -- web/src/shared/protocol.gen.ts
 
 build:
 	cd server && go build ./...
@@ -35,7 +38,7 @@ cover:
 	cd server && ../.github/scripts/check-coverage.sh coverage.out $(MIN_COVERAGE)
 
 # 每次改动后的完整检查
-check: gen fmt-check lint vet cover build
+check: gen-check fmt-check lint vet cover build
 
 dev-server:
 	cd server && go run ./cmd/palpabled
