@@ -1,12 +1,10 @@
-import { useRef, useState, type PointerEvent as RPointerEvent } from 'react'
-import { useDevices } from '../../device-sim/devices'
 import { pairKey, useWorld, type LatLng } from '../../map/world'
 import { copy } from '../../ui/copy'
-import { MAP_H, MAP_W, toLatLng, toXY } from './geo'
+import { MAP_H, MAP_W, toXY } from './geo'
 import { usePositions } from './sensors'
 
-// 公园地图：草地、小河、树与小路是装饰；区域轮廓来自 /world。
-// 本页的玩偶可以拖动（模拟孩子走动），别的窗口的玩偶按 /world 的位置显示。
+// 公园小地图（第一人称右下角的那张）：草地、小河、树与小路是装饰；区域轮廓与所有玩偶的位置来自 /world。
+// 只读，走动在 3D 里进行。
 
 const SKIN_FACE: Record<string, { emoji: string; color: string }> = {
   bear: { emoji: '🐻', color: '#c89a6a' },
@@ -39,47 +37,20 @@ function Tree({ x, y, r }: { x: number; y: number; r: number }) {
 
 export function ParkMap({ viewer }: { viewer: string }) {
   const world = useWorld()
-  const devices = useDevices((s) => s.devices)
-  const { pos, move } = usePositions()
-  const svg = useRef<SVGSVGElement>(null)
-  const [drag, setDrag] = useState<string | null>(null)
-  const local = new Set(devices.map((d) => d.mac))
+  const pos = usePositions((p) => p.pos)
 
-  const toSvg = (e: RPointerEvent) => {
-    const m = svg.current?.getScreenCTM()
-    if (!m) return null
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse())
-    return { x: Math.max(10, Math.min(MAP_W - 10, p.x)), y: Math.max(10, Math.min(MAP_H - 10, p.y)) }
-  }
-
+  // 自己的位置以本页为准（比 /world 的推送新）；别人的按 /world。
   const avatars = Object.values(world.devices)
-    .filter((d) => d.online || local.has(d.device))
-    .map((d) => ({ ...d, at: pos[d.device] ?? d.pos }))
+    .filter((d) => d.online || d.device === viewer)
+    .map((d) => ({ ...d, at: d.device === viewer ? (pos[viewer] ?? d.pos) : d.pos }))
     .filter((d): d is typeof d & { at: LatLng } => !!d.at)
-  // 本页刚加的玩偶还没进 /world 时也画出来。
-  for (const d of devices) {
-    if (!world.devices[d.mac] && pos[d.mac]) {
-      avatars.push({ device: d.mac, name: '', skin: d.store.getState().skin, online: false, channels: [], speaking: false, at: pos[d.mac] })
-    }
-  }
 
   const zone = world.zones[0]
   const zonePath = zone?.polygon.map((p, i) => `${i ? 'L' : 'M'}${toXY(p).x},${toXY(p).y}`).join(' ') + ' Z'
   const zoneTop = zone ? toXY(zone.polygon[0]) : null
 
   return (
-    <svg
-      ref={svg}
-      viewBox={`0 0 ${MAP_W} ${MAP_H}`}
-      className="h-full w-full touch-none select-none"
-      onPointerMove={(e) => {
-        if (!drag) return
-        const p = toSvg(e)
-        if (p) move(drag, toLatLng(p.x, p.y))
-      }}
-      onPointerUp={() => setDrag(null)}
-      onPointerLeave={() => setDrag(null)}
-    >
+    <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} className="h-full w-full select-none">
       <defs>
         <linearGradient id="land" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#eef6e4" />
@@ -131,18 +102,8 @@ export function ParkMap({ viewer }: { viewer: string }) {
         const face = SKIN_FACE[d.skin] ?? SKIN_FACE.bear
         const mine = d.device === viewer
         const rel = world.friends[pairKey(viewer, d.device)]
-        const draggable = local.has(d.device)
         return (
-          <g
-            key={d.device}
-            transform={`translate(${x}, ${y})`}
-            style={{ cursor: draggable ? 'grab' : 'default' }}
-            onPointerDown={(e) => {
-              if (!draggable) return
-              ;(e.target as Element).setPointerCapture?.(e.pointerId)
-              setDrag(d.device)
-            }}
-          >
+          <g key={d.device} transform={`translate(${x}, ${y})`}>
             {d.speaking && (
               <circle r={30} fill="none" stroke="#3ad07a" strokeWidth={4} opacity={0.8}>
                 <animate attributeName="r" values="26;36;26" dur="1.1s" repeatCount="indefinite" />

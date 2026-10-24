@@ -1,153 +1,128 @@
-import { useEffect } from 'react'
-import { useStore } from 'zustand'
+import { useEffect, useState } from 'react'
+import { activate, useClient, wasUnboxed } from './device-sim/client'
 import type { VirtualDevice } from './device-sim/device'
-import { useDevices } from './device-sim/devices'
-import { connectWorld, useWorld } from './map/world'
+import { connectWorld } from './map/world'
 import { ParentPanel } from './parent-sim/ParentPanel'
-import { useDemo, type Scene } from './scenes/demo'
-import { Extras } from './scenes/extras/Extras'
+import { Home } from './site/Home'
 import { Skins } from './scenes/extras/Skins'
-import { Desk } from './scenes/desk/Desk'
+import { Hud } from './scenes/hud/Hud'
+import { useJourney } from './scenes/journey'
 import { ParkStage } from './scenes/park/ParkStage'
-import { Unbox } from './scenes/unbox/Unbox'
+import { Room } from './scenes/room/Room'
 import { copy } from './ui/copy'
-import { Button, Card, StepBadge, StepHeader } from './ui/components'
+import { Card } from './ui/components'
 
-const SCENE_OF_STEP: Scene[] = ['unbox', 'desk', 'park', 'park', 'park']
+// 这个网站就是一台设备的客户端：打开页面，你就站在自己的房间里。
+// 家长端是另一个客户端（#/parent），孩子之间只通过服务端互通。
+
+type Route = 'home' | 'play' | 'parent'
+
+function useRoute(): Route {
+  const read = (): Route => (location.hash.startsWith('#/parent') ? 'parent' : location.hash.startsWith('#/play') ? 'play' : 'home')
+  const [route, setRoute] = useState(read)
+  useEffect(() => {
+    const on = () => setRoute(read())
+    window.addEventListener('hashchange', on)
+    return () => window.removeEventListener('hashchange', on)
+  }, [])
+  return route
+}
 
 export default function App() {
-  const { devices, active } = useDevices()
-  const { scene, viewing, setScene, view } = useDemo()
+  const route = useRoute()
+  if (route === 'home') return <Home />
+  return route === 'parent' ? <ParentPage /> : <Client />
+}
+
+function ParentPage() {
   useEffect(connectWorld, [])
-
-  const device = devices.find((d) => d.mac === (viewing ?? active)) ?? devices[0]
-  const parkStep = useParkStep(device)
-  const step = scene === 'unbox' ? 0 : scene === 'desk' ? 1 : parkStep
-
   return (
     <div className="mx-auto max-w-7xl px-4 pb-16 pt-5 sm:px-6">
-      <Header />
-      <StepNav current={step} onPick={(i) => setScene(SCENE_OF_STEP[i])} />
-      <KidSwitcher current={device} onPick={view} />
-
-      <Card className="mt-4">
-        <StepHeader n={step + 1} title={copy.steps[step].title} sub={copy.steps[step].sub} tag={copy.steps[step].web ? 'Web 展示' : undefined} />
-        {device && scene === 'unbox' && <UnboxStage device={device} onDone={() => setScene('desk')} />}
-        {device && scene === 'desk' && <Desk device={device} onPark={() => setScene('park')} />}
-        {scene === 'park' && <ParkStage />}
-      </Card>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <Card>
-          <SectionTitle n={6} title={copy.extras.title} tag="示例" sub={copy.extras.sub} />
-          {device && <Extras device={device} />}
-        </Card>
-        <Card>
-          <SectionTitle n={8} title={copy.skins.title} sub={copy.skins.sub} />
-          {device && <Skins device={device} />}
-        </Card>
-      </div>
-
-      <Card className="mt-4">
-        <SectionTitle n={7} title={copy.parent.title} tag="Web 模拟" sub="家长查看好友、群聊、今日回顾，进行家长控制。好友请求要在这里确认才生效。" />
+      <header className="mb-4 flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2f6bff] text-2xl shadow">🧸</div>
+        <span className="text-3xl font-black text-[#1d3557]">{copy.brand.name}</span>
+        <span className="text-2xl font-semibold text-[#2f6bff]">{copy.parent.title}</span>
+        <span className="text-sm text-slate-500">{copy.parent.sub}</span>
+        <a href="#/" className="ml-auto text-sm text-slate-500 hover:text-[#2f6bff]">
+          ← 首页
+        </a>
+      </header>
+      <Card>
         <ParentPanel />
       </Card>
     </div>
   )
 }
 
-// 公园里的进度：有好友后到第 4 步，好友也在同一频道时到第 5 步。
-function useParkStep(device?: VirtualDevice): number {
-  const fallback = useDevices((s) => s.devices[0])
-  const s = useStore((device ?? fallback).store)
-  if (Object.keys(s.present).length > 0) return 4
-  if (Object.values(s.friends).some((f) => f.status === 'confirmed')) return 3
-  return 2
+function Client() {
+  useEffect(connectWorld, [])
+  const device = useClient((s) => s.device)
+  useEffect(() => {
+    void useClient.getState().start()
+  }, [])
+  if (!device) return <div className="flex h-dvh items-center justify-center text-slate-400">…</div>
+  return <World device={device} />
 }
 
-function SectionTitle({ n, title, sub, tag }: { n: number; title: string; sub: string; tag?: string }) {
+function World({ device }: { device: VirtualDevice }) {
+  const place = useJourney((s) => s.place)
+  const fade = useJourney((s) => s.fade)
+  const back = wasUnboxed(device.mac)
+  const entered = useJourney((s) => s.entered)
+  useEffect(() => () => useJourney.getState().setEntered(false), [])
+
+  // 拆过箱的玩偶直接在桌面上，进门就醒着。
+  const enter = () => {
+    useJourney.getState().setEntered(true)
+    // 进门这一下点击同时把鼠标锁进画面，之后像 FPS 一样移动鼠标看四周。
+    void Promise.resolve(document.querySelector('canvas')?.requestPointerLock?.()).catch(() => {})
+    if (back) {
+      useJourney.getState().setPhase('placed')
+      void activate(device)
+    }
+  }
+
   return (
-    <header className="mb-3 flex items-start gap-3">
-      <StepBadge n={n} />
-      <div>
-        <h2 className="text-xl font-bold text-[#1d3557]">
-          {title}
-          {tag && <span className="ml-1 text-base font-medium text-slate-500">（{tag}）</span>}
-        </h2>
-        <p className="mt-0.5 text-sm text-slate-500">{sub}</p>
+    <div className="fixed inset-0 overflow-hidden bg-[#fbe9d6]">
+      {place === 'room' ? <Room device={device} /> : <ParkStage device={device} />}
+      {entered && <Hud device={device} />}
+      {!entered && <Gate device={device} back={back} onEnter={enter} />}
+      <div className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#fbe9d6] transition-opacity duration-500 ${fade ? 'opacity-100' : 'opacity-0'}`}>
+        <span className="text-2xl font-semibold text-[#1d3557]">{fade}</span>
       </div>
-    </header>
+    </div>
   )
 }
 
-function UnboxStage({ device, onDone }: { device: VirtualDevice; onDone: () => void }) {
-  const skin = useStore(device.store, (s) => s.skin)
-  return <Unbox skin={skin} onDone={onDone} />
-}
-
-function Header() {
-  const worldOn = useWorld((w) => w.connected)
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2f6bff] text-2xl shadow">🧸</div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-black text-[#1d3557]">{copy.brand.name}</span>
-          <span className="text-2xl font-semibold text-[#2f6bff]">{copy.brand.en}</span>
-        </div>
-        <span className="hidden text-sm text-slate-500 md:inline">{copy.brand.slogan}</span>
-      </div>
-      <div className="flex items-center gap-3 text-sm text-slate-500">
-        <span className={`h-2 w-2 rounded-full ${worldOn ? 'bg-emerald-400' : 'bg-slate-300'}`} title="演示地图通道" />
-        {copy.brand.badge}
-      </div>
-    </header>
+/** 进门前的一次点击：浏览器要求有手势才能出声、才能打开麦克风。第一次来先选一只玩偶。 */
+function Gate({ device, back, onEnter }: { device: VirtualDevice; back: boolean; onEnter: () => void }) {
+  const brand = (
+    <div className="flex items-baseline justify-center gap-2">
+      <span className="text-4xl font-black text-[#1d3557]">{copy.brand.name}</span>
+      <span className="text-2xl font-semibold text-[#2f6bff]">{copy.brand.en}</span>
+    </div>
   )
-}
-
-function StepNav({ current, onPick }: { current: number; onPick: (i: number) => void }) {
+  if (back) {
+    return (
+      <button type="button" onClick={onEnter} className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-[#fbe9d6]/92 backdrop-blur-sm">
+        <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[#2f6bff] text-5xl shadow-lg">🧸</div>
+        {brand}
+        <span className="text-sm text-slate-500">{copy.brand.slogan}</span>
+        <span className="mt-4 rounded-full bg-[#2f6bff] px-6 py-2 text-lg font-medium text-white shadow">{copy.room.gateBack}</span>
+      </button>
+    )
+  }
   return (
-    <nav className="mt-4 flex flex-wrap gap-2">
-      {copy.steps.map((s, i) => (
-        <button
-          key={s.key}
-          type="button"
-          onClick={() => onPick(i)}
-          className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition ${
-            i === current ? 'bg-[#2f6bff] text-white shadow' : i < current ? 'bg-white text-[#2f6bff] ring-1 ring-sky-200' : 'bg-white/70 text-slate-500 ring-1 ring-slate-200'
-          }`}
-        >
-          <span className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${i === current ? 'bg-white text-[#2f6bff]' : 'bg-slate-100'}`}>{i + 1}</span>
-          {s.title}
+    <div className="absolute inset-0 z-30 flex items-center justify-center overflow-auto bg-[#fbe9d6]/95 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-3xl bg-white/90 p-5 text-center shadow-xl ring-1 ring-sky-100">
+        {brand}
+        <h2 className="mt-3 text-xl font-bold text-[#1d3557]">{copy.room.choose}</h2>
+        <p className="mb-3 text-sm text-slate-500">{copy.room.chooseSub}</p>
+        <Skins device={device} />
+        <button type="button" onClick={onEnter} className="mt-4 rounded-full bg-[#2f6bff] px-6 py-2 text-lg font-medium text-white shadow">
+          {copy.room.gate}
         </button>
-      ))}
-    </nav>
-  )
-}
-
-function KidSwitcher({ current, onPick }: { current?: VirtualDevice; onPick: (mac: string) => void }) {
-  const { devices, add, active } = useDevices()
-  const names = useWorld((w) => w.devices)
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-      <span className="text-slate-500">小朋友窗口：</span>
-      {devices.map((d, i) => {
-        const name = names[d.mac]?.name
-        return (
-          <button
-            key={d.mac}
-            type="button"
-            onClick={() => onPick(d.mac)}
-            className={`rounded-full px-3 py-1 ring-1 ${d === current ? 'bg-[#1d3557] text-white ring-[#1d3557]' : 'bg-white text-slate-600 ring-slate-200'}`}
-          >
-            {name || `玩偶 ${i + 1}`}
-            {d.mac === active && ' 🎤'}
-          </button>
-        )
-      })}
-      <Button tone="ghost" onClick={() => onPick(add(devices.length % 2 ? 'rabbit' : 'cat').mac)}>
-        + {copy.device.add}
-      </Button>
+      </div>
     </div>
   )
 }

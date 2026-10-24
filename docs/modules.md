@@ -732,13 +732,15 @@ func OwnerDevice(p ParticipantID) DeviceID // 好友判断与家长控制都以�
 | 模块 | 类别 | 职责 |
 | --- | --- | --- |
 | `shared` | — | 生成的协议类型、WS 客户端、zustand store |
-| `device-sim` | 设备 | 虚拟设备：麦克风与扬声器、设备端 VAD 与 `mic.state`、`wake`、`proximity`、`location`、按 `audio.downlink` 解码、设备端 MCP 服务（`self.light.set`、`self.haptic.pulse`、`self.camera.take_photo`）。一个页面可开多只（`VirtualDevice`，各自一条连接），物理麦克风同一时刻只交给一只。摄像头与 BLE 由 `environment` 模拟：场景提供"眼前的画面"，靠近强度由地图距离换算 |
+| `device-sim` | 设备 | 虚拟设备：麦克风与扬声器、设备端 VAD 与 `mic.state`、`wake`、`proximity`、`location`、按 `audio.downlink` 解码、设备端 MCP 服务（`self.light.set`、`self.haptic.pulse`、`self.camera.take_photo`）。一个页面就是一台设备（`client.ts` 用 Web Locks 认领浏览器里上次那只，被别的页面占着就新开一只）；放上桌面通电后默认打开麦克风，靠设备端 VAD 判断说话，不做按键。摄像头与 BLE 由 `environment` 模拟：场景提供"眼前的画面"，靠近强度由地图距离换算 |
 | `plush` | 设备表现 | 玩偶与灯带，响应 `light`、`speaker.state`、`haptic` |
-| `scenes/unbox` | Web 展示 | 开箱 |
-| `scenes/desk` | Web 展示 | 桌面场景、起名引导的画面 |
-| `scenes/park` | Web 展示 | 公园，多个小朋友走动、靠近，提供场景截图 |
+| `site` | Web 展示 | 官网首页（`#/`）：风景大图（`public/hero-bg.png`）上叠 3D 玩偶一家，下面是特点、三个动作、玩法、为什么不是手机、家长放心，3D 按需加载；体验入口 `#/play`，家长端 `#/parent` |
+| `scenes/world` | Web 展示 | 第一人称控制器（WASD 走路、鼠标锁定后像 FPS 一样直接转头、Esc 放开鼠标、碰撞、胸前的玩偶；`Interactor`：站在互动点上按 E），房间与公园共用 |
+| `scenes/room` | Web 展示 | 房间：走到盒子旁按 E 打开、按 E 抱出玩偶、到桌前按 E 放下并通电（`activate`）、抱着它走到门口按 E 渐变转场去公园 |
+| `scenes/park` | Web 展示 | 公园：3D 第一人称，别的玩偶按 `/world` 的位置出现；位置只写入 `usePositions`，由原有传感器上报；家在西门外，走到家门口按 E 渐变转场回房间；右下角是只读小地图 |
+| `scenes/hud` | Web 展示 | 画面四周的提示、演示遥控抽屉（起名兜底、示例功能、换皮套） |
 | `map` | Web 展示 | 地图，显示位置、谁在说话、"已屏蔽"（订阅 `/world`） |
-| `parent-sim` | Web 展示 | 手机窗口，调用 `/api` |
+| `parent-sim` | Web 展示 | 家长端页面（`#/parent`，另一个客户端），调用 `/api` |
 | `ui` | Web 展示 | 儿童友好的统一文案表与提示音 |
 
-`device-sim` 不得读取其他虚拟设备的状态；同一页面里的多个小朋友窗口也只通过服务端互通。
+`device-sim` 不得读取其他虚拟设备的状态；不同页面里的小朋友只通过服务端互通。

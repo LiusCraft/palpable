@@ -202,7 +202,7 @@ export class VirtualDevice {
           delete friends[msg.device_id]
         } else {
           friends[msg.device_id] = { deviceId: msg.device_id, name, status: msg.event }
-          this.toast(msg.event === 'pending' ? copy.park.friendPending(name) : copy.park.friendMade)
+          this.toast(msg.event === 'pending' ? copy.park.friendPending(name) : copy.park.friendMade(name))
         }
         this.set({ friends })
         break
