@@ -103,6 +103,8 @@ export class WakeWordEngine {
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') this.want = false
     }
     rec.onend = () => {
+      // 被 pause 掉的旧实例晚到的 onend，不能清掉新实例或触发重启。
+      if (this.rec !== rec) return
       this.rec = null
       if (this.want) this.timer = window.setTimeout(() => this.restart(), RESTART_MS)
     }
