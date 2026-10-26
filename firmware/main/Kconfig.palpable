@@ -1,0 +1,45 @@
+menu "Palpable device"
+
+config PALPABLE_WS_URL
+    string "Palpable server WebSocket URL (ws:// or wss://, including /ws)"
+    default ""
+    help
+        The address of our Go gateway, for example ws://192.168.1.100:8080/ws.
+        Never configure a Linx or XiaoZhi cloud endpoint or token here.
+
+config PALPABLE_SKIN
+    string "Device skin (dragon, rabbit, bear, cat)"
+    default "dragon"
+
+config PALPABLE_VAD_THRESHOLD
+    int "Microphone RMS threshold (16-bit PCM)"
+    range 1 32767
+    default 500
+    help
+        Tune for the microphone and enclosure. Speech ends after 480 ms of
+        silence; a 180 ms preroll protects the beginning of the sentence.
+
+config PALPABLE_HAPTIC_GPIO
+    int "Haptic motor driver GPIO (-1 disables haptic capability)"
+    range -1 48
+    default -1
+    help
+        GPIO must drive a motor driver, never a motor directly.
+        Choose an unused output GPIO for the selected board.
+
+config PALPABLE_LOCATION_SENSOR
+    bool "Board supplies real GPS samples via ReportLocation"
+    default n
+    help
+        Enable only after wiring a board sensor driver to ReportLocation.
+        There are no simulated coordinates in the firmware.
+
+config PALPABLE_PROXIMITY_SENSOR
+    bool "Board supplies BLE/NFC scans via ReportProximity"
+    default n
+    help
+        Enable only after wiring a board scanner to ReportProximity.
+        Report every complete scan, including empty scans, at least every 500 ms.
+        Friend decisions and debouncing belong to the server.
+
+endmenu

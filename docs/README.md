@@ -10,6 +10,7 @@
 | [linx-integration.md](linx-integration.md) | 灵矽能做什么、有什么限制 | 灵矽的能力、已确认的事实、待验证项 |
 | [tasks.md](tasks.md) | 做到哪了、下一步做什么 | 里程碑、**完成状态**、任务包与验收 |
 | [../protocol/README.md](../protocol/README.md) | 设备与服务端说什么 | **已生效**的设备协议（以 schema 为准） |
+| [../firmware/README.md](../firmware/README.md) | ESP32 固件怎么配置、构建和接线 | 小智硬件复用方式、固件构建、传感器接口与主机测试 |
 | [../AGENTS.md](../AGENTS.md) | 代码怎么写 | 编码规则、隐私硬约束、演示主线 |
 
 几条约定：

@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/78/xiaozhi-esp32.git",
+  "revision": "c435f99a88066029ec2dbd2d758c8cc9d051565b",
+  "version": "2.5.3",
+  "idf": ">=6.0.1",
+  "host_cjson_repository": "https://github.com/DaveGamble/cJSON.git",
+  "host_cjson_revision": "c859b25da02955fef659d658b8f324b5cde87be3"
+}

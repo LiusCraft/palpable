@@ -168,7 +168,7 @@ palpable/
 ├── protocol/   设备协议 schema 与文档（单一事实来源）
 ├── server/     Go 后端
 ├── web/        Web 设备模拟器与演示页面
-├── firmware/   预留：未来硬件固件
+├── firmware/   基于小智硬件层的 ESP32 可感协议固件（构建与接线见目录内 README）
 └── docs/       产品、架构、模块、灵矽对接、路线图
 ```
 
