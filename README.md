@@ -2,7 +2,7 @@
 
 > 不只是玩偶，更是能说话的朋友。
 
-**路演视频（约 10 分钟，含真人录制的完整演示）：** [观看 palpable-pitch.mp4](docs/assets/palpable-pitch.mp4)　·　一分钟简介：[palpable-demo.mp4](web/public/palpable-demo.mp4)
+**路演视频（约 10 分钟，含真人录制的完整演示）：** [在线观看](https://palpable.surgecode.org/pitch/)（仓库内文件：[palpable-pitch.mp4](docs/assets/palpable-pitch.mp4)）　·　一分钟简介：[palpable-demo.mp4](web/public/palpable-demo.mp4)
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![go](https://img.shields.io/badge/Go-1.26-00ADD8)
