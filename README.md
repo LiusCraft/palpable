@@ -2,6 +2,8 @@
 
 > 不只是玩偶，更是能说话的朋友。
 
+**路演视频（约 10 分钟，含真人录制的完整演示）：** [观看 palpable-pitch.mp4](docs/assets/palpable-pitch.mp4)　·　一分钟简介：[palpable-demo.mp4](web/public/palpable-demo.mp4)
+
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![go](https://img.shields.io/badge/Go-1.26-00ADD8)
 ![react](https://img.shields.io/badge/React-19-61DAFB)
@@ -153,7 +155,7 @@ Web 模拟器与未来固件是**同一份协议的两个客户端**。设备端
 ```
 
 - 协议以 [`protocol/palpable.schema.json`](protocol/palpable.schema.json) 为单一事实来源，前端 TS 类型由其生成（`make gen`）
-- 详见 [docs/architecture.md](docs/architecture.md) 与 [docs/modules.md](docs/modules.md)
+- 详见 [docs/architecture.md](docs/architecture.md) 与 [docs/modules/](docs/modules/README.md)
 
 | 层 | 选型 |
 | --- | --- |
@@ -180,7 +182,7 @@ palpable/
 | --- | --- |
 | [docs/product.md](docs/product.md) | 做什么、为谁、为什么 |
 | [docs/architecture.md](docs/architecture.md) | 系统边界、分层、关键决策 |
-| [docs/modules.md](docs/modules.md) | 各模块契约 |
+| [docs/modules/](docs/modules/README.md) | 各模块契约 |
 | [docs/linx-integration.md](docs/linx-integration.md) | 灵矽能力与限制 |
 | [docs/tasks.md](docs/tasks.md) | 路线图与完成状态 |
 | [protocol/README.md](protocol/README.md) | 设备协议 |
