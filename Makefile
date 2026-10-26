@@ -1,4 +1,4 @@
-.PHONY: gen gen-check fmt-check build lint test vet cover check dev-server dev-web
+.PHONY: gen gen-check fmt-check build lint test vet cover check dev-server dev-web firmware-prepare firmware-test firmware-smoke
 
 # PR 要求的后端单测覆盖率下限
 MIN_COVERAGE ?= 90
@@ -45,3 +45,16 @@ dev-server:
 
 dev-web:
 	cd web && pnpm run dev
+
+firmware-prepare:
+	python3 firmware/scripts/prepare.py
+
+# 不依赖 ESP-IDF；可用 -DCJSON_SOURCE_DIR=... 离线运行。
+firmware-test:
+	cmake -S firmware/tests -B firmware/.build/host $(FIRMWARE_CMAKE_ARGS)
+	cmake --build firmware/.build/host
+	ctest --test-dir firmware/.build/host --output-on-failure
+
+firmware-smoke: firmware-test
+	cd server && go build -o ../firmware/.build/palpabled ./cmd/palpabled
+	python3 firmware/tests/gateway_smoke.py --server-bin firmware/.build/palpabled
