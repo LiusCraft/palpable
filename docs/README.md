@@ -4,9 +4,11 @@
 
 | 文档 | 回答什么 | 是哪些内容的唯一出处 |
 | --- | --- | --- |
-| [product.md](product.md) | 做什么、为谁、为什么 | 用户场景、体验、隐私承诺、演示范围、商业假设 |
-| [architecture.md](architecture.md) | 系统怎么拆、怎么协作 | 系统边界、关键决策、分层与依赖规则、设备组织方式、关键时序、隐私规则的执行点、开放问题 |
-| [modules.md](modules.md) | 每个模块的契约 | 模块职责、接口、数据结构、事件、计划中的协议增量 |
+| [product.md](product.md) | 做什么、为谁、为什么 | 用户场景、体验、隐私承诺、演示范围、商业价值与商业模式（假设） |
+| [architecture.md](architecture.md) | 系统怎么拆、怎么协作 | 系统边界、关键决策、分层与依赖规则、设备组织方式、关键时序、隐私规则的执行点、扩展路径、开放问题 |
+| [research.md](research.md) | 别人怎么做、证据是什么 | 按功能的对标调研、来源与缺口 |
+| [modules/](modules/README.md) | 每个模块的设计 | 模块边界、接口、数据结构、关键流程（伪代码）、约束 |
+| [testing.md](testing.md) | 怎么验证 | 测试分层、检查命令、覆盖率门槛、已知缺口 |
 | [linx-integration.md](linx-integration.md) | 灵矽能做什么、有什么限制 | 灵矽的能力、已确认的事实、待验证项 |
 | [tasks.md](tasks.md) | 做到哪了、下一步做什么 | 里程碑、**完成状态**、任务包与验收 |
 | [../protocol/README.md](../protocol/README.md) | 设备与服务端说什么 | **已生效**的设备协议（以 schema 为准） |
@@ -15,12 +17,12 @@
 几条约定：
 
 - **完成状态只写在 tasks.md。** 其他文档描述"应该是什么样"，不标进度。
-- **协议分两处：** 已生效的在 `protocol/`，计划中的在 [modules.md 的 protocol 一节](modules.md#protocol)；落地时从后者挪到前者。
+- **协议分两处：** 已生效的在 `protocol/`，计划中的在 [modules/protocol.md](modules/protocol.md#变更流程与计划中的增量)；落地时从后者挪到前者。
 - **新增决策**写进 [architecture.md 的关键决策](architecture.md#2-关键决策)，带上原因与代价；推翻旧决策时改原条目，不另起一条。
 
 ## 阅读顺序
 
-新加入的人：product → architecture → modules 中自己负责的模块 → tasks 中对应的任务包。只做前端的人另读 [设备抽象](architecture.md#7-设备抽象) 与 [前端模块](modules.md#前端模块)。
+新加入的人：product → architecture → modules/ 中自己负责的模块 → tasks 中对应的任务包。只做前端的人另读 [设备抽象](architecture.md#7-设备抽象) 与 [前端模块](modules/web.md)。
 
 ## 术语表
 
