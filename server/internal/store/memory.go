@@ -16,6 +16,7 @@ import (
 type Memory struct {
 	mu          sync.Mutex
 	devices     map[id.DeviceID]Device
+	keys        map[id.DeviceID]DeviceKey
 	styles      map[string]Style
 	guardians   map[id.GuardianID]Guardian
 	friendships map[string]Friendship
@@ -29,6 +30,7 @@ var _ Store = (*Memory)(nil)
 func NewMemory() *Memory {
 	return &Memory{
 		devices:     map[id.DeviceID]Device{},
+		keys:        map[id.DeviceID]DeviceKey{},
 		styles:      map[string]Style{},
 		guardians:   map[id.GuardianID]Guardian{},
 		friendships: map[string]Friendship{},
@@ -41,6 +43,7 @@ func NewMemory() *Memory {
 func (m *Memory) Close() error { return nil }
 
 func (m *Memory) Devices() DeviceRepo         { return memDevices{m} }
+func (m *Memory) DeviceKeys() DeviceKeyRepo   { return memDeviceKeys{m} }
 func (m *Memory) Styles() StyleRepo           { return memStyles{m} }
 func (m *Memory) Guardians() GuardianRepo     { return memGuardians{m} }
 func (m *Memory) Friendships() FriendshipRepo { return memFriendships{m} }
@@ -58,6 +61,7 @@ func (r memDevices) Get(_ context.Context, d id.DeviceID) (Device, error) {
 	if !ok {
 		return Device{}, fmt.Errorf("get device %s: %w", d, ErrNotFound)
 	}
+	dev.BlockedAgents = slices.Clone(dev.BlockedAgents)
 	return dev, nil
 }
 
@@ -68,6 +72,7 @@ func (r memDevices) Create(_ context.Context, d Device) error {
 		return fmt.Errorf("create device %s: %w", d.ID, ErrConflict)
 	}
 	d.CreatedAt = roundMillis(d.CreatedAt)
+	d.BlockedAgents = slices.Clone(d.BlockedAgents)
 	r.m.devices[d.ID] = d
 	return nil
 }
@@ -80,6 +85,7 @@ func (r memDevices) Update(_ context.Context, d Device) error {
 		return fmt.Errorf("update device %s: %w", d.ID, ErrNotFound)
 	}
 	d.CreatedAt = old.CreatedAt
+	d.BlockedAgents = slices.Clone(d.BlockedAgents)
 	r.m.devices[d.ID] = d
 	return nil
 }
@@ -211,8 +217,8 @@ func (r memFriendships) Create(_ context.Context, f Friendship) error {
 	if f.A == f.B {
 		return fmt.Errorf("create friendship %s: %w", f.ID, errSelfFriendship)
 	}
-	f.A, f.B = orderPair(f.A, f.B)
-	f.CreatedAt = roundMillis(f.CreatedAt)
+	f.normalize()
+	f.CreatedAt, f.UpdatedAt = roundMillis(f.CreatedAt), roundMillis(f.UpdatedAt)
 	r.m.mu.Lock()
 	defer r.m.mu.Unlock()
 	for _, old := range r.m.friendships {
@@ -231,7 +237,11 @@ func (r memFriendships) Update(_ context.Context, f Friendship) error {
 	if !ok {
 		return fmt.Errorf("update friendship %s: %w", f.ID, ErrNotFound)
 	}
-	old.Status, old.ConfirmedBy = f.Status, f.ConfirmedBy
+	old.Status, old.ConfirmedBy, old.UpdatedAt = f.Status, f.ConfirmedBy, roundMillis(f.UpdatedAt)
+	old.ApprovedA, old.ApprovedB = f.ApprovedA, f.ApprovedB
+	if f.A != old.A {
+		old.ApprovedA, old.ApprovedB = f.ApprovedB, f.ApprovedA
+	}
 	r.m.friendships[f.ID] = old
 	return nil
 }
@@ -440,4 +450,31 @@ func sortedValues[K comparable, V any](m map[K]V, cmp func(a, b V) int) []V {
 	}
 	slices.SortFunc(out, cmp)
 	return out
+}
+
+// ---- device_key ----
+
+type memDeviceKeys struct{ m *Memory }
+
+func (r memDeviceKeys) Get(_ context.Context, d id.DeviceID) (DeviceKey, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	k, ok := r.m.keys[d]
+	if !ok {
+		return DeviceKey{}, fmt.Errorf("get device key %s: %w", d, ErrNotFound)
+	}
+	k.PublicKey = slices.Clone(k.PublicKey)
+	return k, nil
+}
+
+func (r memDeviceKeys) Create(_ context.Context, k DeviceKey) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if _, ok := r.m.keys[k.Device]; ok {
+		return fmt.Errorf("create device key %s: %w", k.Device, ErrConflict)
+	}
+	k.PublicKey = slices.Clone(k.PublicKey)
+	k.CreatedAt = roundMillis(k.CreatedAt)
+	r.m.keys[k.Device] = k
+	return nil
 }

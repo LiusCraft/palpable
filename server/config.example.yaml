@@ -2,13 +2,17 @@
 addr: ":8080"
 db_path: palpable.db  # SQLite 文件，不入库
 
+# 设备认证，见 docs/trust.md §2。open：首次上线登记公钥（演示默认）；manifest：只认出厂清单；off：不认证（仅供固件过渡）。
+auth:
+  enrollment: open
+
 # 演示预置：新设备自动绑定到这个家长，并预置声纹登记的同意（产品里由家长端取得）。
 demo:
   guardian: demo-parent
   guardian_name: 朵朵妈妈
   voice_consent: true    # 引导期做声音登记；false 则跳过
   parent_token: palpable-demo   # 家长端（Web 手机窗口）用的令牌
-  friend_needs_approval: false  # 默认贴近即成为好友、家长收到通知；true 则需家长先确认
+  friend_needs_approval: false  # 演示预置的交友方式：false → "孩子自己交友、事后通知"（两个孩子都说好即成为好友）；true → 每个新朋友都需家长同意。产品默认需家长同意
   world: true                 # 开放 /world 演示地图（会暴露所有设备位置，只在演示时打开）
 
 # 不填 ws_url 则不启用 AI 对话。

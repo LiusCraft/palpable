@@ -37,7 +37,7 @@ type Zone struct {
 //   - "pos"：位置（Pos）
 //   - "member"：进出频道（Channel，Joined）
 //   - "burst"：开始 / 结束说话（Channel，Speaking）
-//   - "friend"：好友关系（Friend，Status：pending / confirmed / removed）
+//   - "friend"：好友关系（Friend，Status：asking / pending / confirmed / removed）
 //   - "snapshot"：连接时的全量状态（Devices、Friends、Zones）
 type Event struct {
 	Kind     string        `json:"kind"`

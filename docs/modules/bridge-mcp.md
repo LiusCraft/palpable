@@ -75,6 +75,9 @@ OnDeviceMCP(d, msg):
 | `self.group.current` | — | `channel.Current` | 当前群与在线好友 |
 | `self.friends.list` | — | `relation.Friends` | 好友名字 |
 | `self.friends.nearby` | — | `relation.FilterFriends(channel.Members)` | 附近的好友 |
+| `self.friends.accept` | — | `relation.Assent` | 孩子说"好"；没有在问时返回错误结果 |
+| `self.friends.decline` | — | `relation.Decline` | 孩子说"不要" |
+| `self.channel.speak` | — | `Agents.AgentSpeak`（app） | 主人点名让小伙伴对频道说话；接下来一段话播给好友。不在频道、家长没开时返回错误结果 |
 | `self.share.publish` | `description` | `share.Publish` | 已分享；未配置灵矽时不注册 |
 
 设备端自带的工具（`self.light.set`、`self.haptic.pulse`、`self.camera.take_photo`）在设备侧实现，见 [web](web.md#device-sim)。

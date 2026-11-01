@@ -56,6 +56,7 @@ type App struct {
 	store   store.Store
 	catalog *device.Catalog
 	devices *device.Devices
+	binder  *device.Binder
 	ai      ai // 未配置灵矽时为 nil
 	rel     *relation.Relations
 	chans   *channel.Channels
@@ -65,6 +66,11 @@ type App struct {
 	history *history.History
 	world   *world.World // 仅演示模式
 	gw      *gateway.Gateway
+
+	// requireBind 为 true 时未绑定家长的设备不提供任何服务，见 docs/trust.md §3。
+	requireBind bool
+	active      sync.Map // id.DeviceID → struct{}：已绑定、正在服务的在线设备
+	bindWait    sync.Map // id.DeviceID → chan struct{}：等待绑定的在线设备，绑定时关闭
 
 	speaking sync.Map // id.DeviceID → bool：AI 是否正在说话，交棒前等它说完
 	enrolled sync.Map // id.DeviceID → chan struct{}：声纹登记尝试结束时关闭
@@ -78,6 +84,10 @@ type deps struct {
 	ai    ai
 	linx  linxapi.Client
 	demo  config.Demo
+	// enrollment 为空时不认证，测试默认如此；配置文件默认 open。
+	enrollment device.Enrollment
+	// requireBind 在产品里总为 true；测试默认 false，只有绑定相关的用例打开。
+	requireBind bool
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -85,7 +95,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := deps{store: db, demo: cfg.Demo}
+	d := deps{store: db, demo: cfg.Demo, enrollment: device.Enrollment(cfg.Auth.Enrollment), requireBind: true}
 	if cfg.Linx.Enabled() {
 		d.ai = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token})
 		d.linx = linxapi.New(cfg.Linx.APIBase, cfg.Linx.Token).WithOTA(cfg.Linx.OTAURL)
@@ -108,7 +118,6 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	rel.SetAutoConfirm(!d.demo.FriendNeedsApproval)
 	chans, err := channel.New(ctx, d.store.Groups())
 	if err != nil {
 		return nil, err
@@ -118,7 +127,9 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	}
 	catalog := device.NewCatalog(d.store.Styles(), d.linx)
 	a := &App{demo: d.demo, store: d.store, catalog: catalog, devices: device.New(d.store.Devices(), catalog, d.linx),
-		ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park)}
+		ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park), requireBind: d.requireBind}
+	a.binder = device.NewBinder(a.devices)
+	rel.SetAutoApprove(a.devices.AutoApproveFriends)
 	var aiPort voice.AI = noAI{}
 	if d.ai != nil {
 		aiPort = d.ai
@@ -129,7 +140,7 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		return p.AgentID, err
 	})
 	a.mcp = mcp.New(a.toLinx, a.toDevice, a.hasMCP)
-	services := mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel}
+	services := mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel, Agents: a}
 	if d.ai != nil {
 		services.Share = share.New(chans, rel, d.ai, a.history, a.dollName)
 	}
@@ -148,6 +159,16 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		d.ai.OnMCP(a.mcp.OnLinxMCP)
 	}
 	a.gw = gateway.New(a, allowDevOrigin)
+	if d.enrollment != "" {
+		auth, err := device.NewAuthenticator(d.store.DeviceKeys(), d.enrollment)
+		if err != nil {
+			return nil, err
+		}
+		if !auth.Required() {
+			slog.Warn("device authentication disabled: any client can claim any MAC")
+		}
+		a.gw.SetAuth(auth)
+	}
 	if d.demo.World {
 		if err := a.startWorld(ctx); err != nil {
 			return nil, err
@@ -165,7 +186,9 @@ func (a *App) Start(ctx context.Context) {
 	go a.voice.Run(ctx)
 	go a.voiceEvents(ctx)
 	go a.deviceEvents(ctx)
+	go a.bindEvents(ctx)
 	go a.sweepGroups(ctx)
+	go a.sweepFriends(ctx)
 }
 
 func (a *App) Close() error { return a.store.Close() }
@@ -179,8 +202,10 @@ func (a *App) Handler() http.Handler {
 	}
 	if a.demo.ParentToken != "" && a.demo.Guardian != "" {
 		online := func(d id.DeviceID) bool { _, ok := a.gw.Session(d); return ok }
-		mux.Handle("/api/", parentapi.New(parentapi.FixedToken(a.demo.ParentToken, id.GuardianID(a.demo.Guardian)),
-			a.devices, a.rel, a.chans, a.history, online))
+		api := parentapi.New(parentapi.FixedToken(a.demo.ParentToken, id.GuardianID(a.demo.Guardian)),
+			a.devices, a.rel, a.chans, a.history, online)
+		api.EnableBinding(a)
+		mux.Handle("/api/", api)
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -233,6 +258,18 @@ func (a *App) connect(s *gateway.Session) {
 		return
 	}
 	p = a.applyDemo(ctx, p)
+	if a.requireBind && p.Guardian == "" {
+		a.awaitBind(s)
+		return
+	}
+	a.serve(s, p)
+}
+
+// serve 让已绑定的设备开始工作：接上 AI，新设备由小可欢迎。
+func (a *App) serve(s *gateway.Session, p device.Profile) {
+	ctx := s.Context()
+	d := s.DeviceID()
+	a.active.Store(d, struct{}{})
 	a.publish(world.Event{Kind: "device", Device: d, Name: p.DollName, Skin: p.Skin})
 	if p.Stage == device.StageNamed {
 		// 上次起好名字但交棒没完成：重试，不让孩子重新起名。
@@ -245,7 +282,7 @@ func (a *App) connect(s *gateway.Session) {
 	if a.ai == nil {
 		return
 	}
-	if err := a.ai.Open(ctx, s, persona(p)); err != nil {
+	if err := a.ai.Open(ctx, a.tap(s), persona(p)); err != nil {
 		slog.Warn("open ai session", "device_id", d, "error", err)
 		return
 	}
@@ -258,7 +295,7 @@ func (a *App) connect(s *gateway.Session) {
 
 // applyDemo 演示环境里新设备自动绑定预置家长与同意标记；产品里由家长端完成。
 func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
-	if a.demo.Guardian == "" || p.Guardian != "" {
+	if a.demo.Guardian == "" || a.demo.ManualBind || p.Guardian != "" {
 		return p
 	}
 	g := id.GuardianID(a.demo.Guardian)
@@ -267,6 +304,12 @@ func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
 		return p
 	}
 	p.Guardian = g
+	// 演示默认"孩子自己交友、事后通知"，贴一贴两个孩子都说好就成为好友；产品默认需家长批准。
+	if !a.demo.FriendNeedsApproval {
+		if err := a.devices.SetFriendPolicy(ctx, p.ID, device.FriendNotify); err == nil {
+			p.FriendPolicy = device.FriendNotify
+		}
+	}
 	if a.demo.VoiceConsent {
 		if err := a.devices.SetVoiceConsent(ctx, p.ID, true); err == nil {
 			p.VoiceConsent = true
@@ -302,6 +345,9 @@ func (a *App) ensureCatalog(ctx context.Context) {
 }
 
 func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
+	if !a.serving(s.DeviceID()) {
+		return // 未绑定：不进 AI、不进频道、不交友、不记位置
+	}
 	switch m := msg.(type) {
 	case *protocol.MicState:
 		a.voice.OnMicState(s.DeviceID(), m.State == "start")
@@ -328,10 +374,27 @@ func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 }
 
 func (a *App) OnAudio(s *gateway.Session, frame []byte) {
+	if !a.serving(s.DeviceID()) {
+		return
+	}
 	a.voice.OnMicFrame(s.DeviceID(), frame)
 }
 
+// serving 是热路径：sync.Map 读不加锁。
+func (a *App) serving(d id.DeviceID) bool {
+	if !a.requireBind {
+		return true
+	}
+	_, ok := a.active.Load(d)
+	return ok
+}
+
 func (a *App) OnDisconnect(s *gateway.Session) {
+	a.active.Delete(s.DeviceID())
+	a.binder.Revoke(s.DeviceID())
+	if ch, ok := a.bindWait.LoadAndDelete(s.DeviceID()); ok {
+		close(ch.(chan struct{}))
+	}
 	a.voice.OnDisconnect(s.DeviceID())
 	a.mcp.Forget(s.DeviceID())
 	a.speaking.Delete(s.DeviceID())
@@ -389,16 +452,27 @@ func (a *App) relationEvents(ctx context.Context) {
 func (a *App) onRelation(ctx context.Context, e relation.Event) {
 	f := e.Friendship
 	a.publish(world.Event{Kind: "friend", Device: f.A, Friend: &f.B, Status: map[relation.EventKind]string{
-		relation.Proposed: "pending", relation.Confirmed: "confirmed", relation.Removed: "removed"}[e.Kind]})
+		relation.Asked: "asking", relation.Proposed: "pending", relation.Confirmed: "confirmed",
+		relation.Removed: "removed", relation.Dropped: "removed"}[e.Kind]})
 	for _, d := range []id.DeviceID{f.A, f.B} {
 		other := f.Other(d)
-		state := &protocol.FriendState{Type: protocol.TypeFriendState, DeviceID: other, Name: a.dollName(ctx, other)}
+		name := a.dollName(ctx, other)
+		state := &protocol.FriendState{Type: protocol.TypeFriendState, DeviceID: other, Name: name}
 		switch e.Kind {
-		case relation.Proposed:
-			state.Event = "pending"
+		case relation.Asked:
+			// 先问孩子：小伙伴开口问，孩子说好后 AI 调 self.friends.accept。
+			state.Event = "asking"
 			a.send(d, state,
 				&protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "double_tap"},
 				&protocol.Sound{Type: protocol.TypeSound, Name: "friend"})
+			a.say(ctx, d, fmt.Sprintf(sayFriendAsk, friendLabel(name)))
+		case relation.Dropped:
+			state.Event = "removed"
+			a.send(d, state)
+		case relation.Proposed:
+			state.Event = "pending"
+			a.send(d, state)
+			a.say(ctx, d, fmt.Sprintf(sayFriendPending, friendLabel(name)))
 		case relation.Confirmed:
 			state.Event = "confirmed"
 			// 贴一贴自动成为好友时这是孩子唯一的反馈，所以和"请求"一样要有提示音。
@@ -413,6 +487,43 @@ func (a *App) onRelation(ctx context.Context, e relation.Event) {
 	}
 	if e.Kind == relation.Removed {
 		a.voice.OnFriendRemoved(f.A, f.B)
+	}
+}
+
+// say 让已就绪设备的小伙伴说一句话，不阻塞事件循环；引导期间与没有 AI 时不说。
+func (a *App) say(ctx context.Context, d id.DeviceID, text string) {
+	if a.ai == nil || !a.ready(ctx, d) {
+		return
+	}
+	go func() {
+		sayCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := a.ai.Say(sayCtx, d, text); err != nil {
+			slog.Warn("say", "device_id", d, "error", err)
+		}
+	}()
+}
+
+func friendLabel(name string) string {
+	if name == "" {
+		return "这位小伙伴"
+	}
+	return name
+}
+
+// sweepFriends 让没回答的交友询问及时作罢（询问只有 60 秒），并让过期的家长请求失效。
+func (a *App) sweepFriends(ctx context.Context) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := a.rel.Sweep(ctx); err != nil {
+				slog.Warn("sweep friend requests", "error", err)
+			}
+		}
 	}
 }
 
@@ -616,7 +727,7 @@ func (a *App) handoff(e device.Named) {
 		return
 	}
 	a.ai.Close(e.Device)
-	if err := a.ai.Open(ctx, sess, persona(p)); err != nil {
+	if err := a.ai.Open(ctx, a.tap(sess), persona(p)); err != nil {
 		slog.Warn("reopen ai after handoff", "device_id", e.Device, "error", err)
 		return
 	}

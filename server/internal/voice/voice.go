@@ -7,6 +7,7 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -23,7 +24,14 @@ const (
 	aiTurnMax    = 30 * time.Second // AI 一直不回应时，回合最长保持这么久
 	tick         = 100 * time.Millisecond
 	eventBuffer  = 256
+
+	// 小伙伴被点名后，这么久内开口的那一段话才播给频道。
+	agentArmWindow = 20 * time.Second
+	// TTS 句间停顿比人说话长；小伙伴的发言以 AI 说完为准，断流看门狗放宽。
+	agentFrameTimeout = 3 * time.Second
 )
+
+var ErrNotInChannel = errors.New("voice: not in any channel")
 
 type Route int
 
@@ -107,6 +115,10 @@ type deviceVoice struct {
 	source      Source
 	busyNotice  bool // 本句已提示过占线
 	out         *outbox
+
+	// 主人点名让小伙伴对频道说话：下一段 AI 语音作为 agt:<mac> 的发言。
+	agentArmedUntil time.Time
+	agentBlocked    map[id.DeviceID]bool // 这些听者的家长屏蔽了它
 }
 
 type Router struct {
@@ -200,6 +212,7 @@ func (r *Router) OnMicState(d id.DeviceID, on bool) {
 			v.aiTurnUntil = time.Time{} // 又开口了：继续等 AI 回应
 		}
 		if route == RouteChannel {
+			r.endAgentLocked(d, &fx) // 主人开口：自己的小伙伴让路
 			r.takeFloorLocked(d, now, &fx)
 		}
 	} else if ch, ok := r.members.ForegroundOf(id.Device(d)); ok {
@@ -281,6 +294,10 @@ func (r *Router) OnAIState(d id.DeviceID, s AIState) {
 	switch s {
 	case AISpeaking:
 		v.aiSpeaking = true
+		if !v.agentArmedUntil.IsZero() && now.Before(v.agentArmedUntil) {
+			v.agentArmedUntil = time.Time{}
+			r.startAgentLocked(d, now, &fx)
+		}
 		if v.source == SourcePeer {
 			// 好友正在说话时优先好友，AI 让路。
 			fx.interrupt = append(fx.interrupt, d)
@@ -289,6 +306,7 @@ func (r *Router) OnAIState(d id.DeviceID, s AIState) {
 		}
 	case AIIdle:
 		v.aiSpeaking = false
+		r.endAgentLocked(d, &fx)
 		if v.source == SourceAI {
 			v.source = SourceNone
 		}
@@ -298,6 +316,63 @@ func (r *Router) OnAIState(d id.DeviceID, s AIState) {
 	}
 	r.mu.Unlock()
 	fx.apply(r)
+}
+
+// ArmAgent 主人点名让小伙伴对频道说话（self.channel.speak）：接下来这一段 AI 语音会作为
+// agt:<owner> 播给前台频道里的好友。blocked 是家长屏蔽了它的听者，由调用方在锁外算好。
+func (r *Router) ArmAgent(owner id.DeviceID, blocked map[id.DeviceID]bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.members.ForegroundOf(id.Device(owner)); !ok {
+		return ErrNotInChannel
+	}
+	v := r.dev(owner)
+	v.agentArmedUntil, v.agentBlocked = r.now().Add(agentArmWindow), blocked
+	return nil
+}
+
+// OnAgentFrame 热路径：主人设备收到的 AI 下行帧；小伙伴正在频道发言时同样转给听者。
+func (r *Router) OnAgentFrame(owner id.DeviceID, frame []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ch, ok := r.members.ForegroundOf(id.Device(owner))
+	if !ok {
+		return
+	}
+	b := r.bursts[ch]
+	if b == nil || b.Speaker != id.Agent(owner) {
+		return
+	}
+	now := r.now()
+	b.LastFrameAt = now
+	if b.FirstInAt.IsZero() {
+		b.FirstInAt = now
+	}
+	for _, l := range b.Listeners {
+		r.dev(id.OwnerDevice(l)).out.pushFrame(frame)
+	}
+	if b.FirstOutAt.IsZero() && len(b.Listeners) > 0 {
+		b.FirstOutAt = now
+	}
+}
+
+// startAgentLocked 频道空闲时让小伙伴拿到发言权；被占时这段话只有主人听到。
+func (r *Router) startAgentLocked(owner id.DeviceID, now time.Time, fx *effects) {
+	ch, ok := r.members.ForegroundOf(id.Device(owner))
+	if !ok || r.bursts[ch] != nil {
+		return
+	}
+	blocked := r.dev(owner).agentBlocked
+	r.startBurstLocked(ch, id.Agent(owner), now, fx, func(l id.DeviceID) bool { return !blocked[l] })
+}
+
+func (r *Router) endAgentLocked(owner id.DeviceID, fx *effects) {
+	r.dev(owner).agentArmedUntil = time.Time{}
+	if ch, ok := r.members.ForegroundOf(id.Device(owner)); ok {
+		if b := r.bursts[ch]; b != nil && b.Speaker == id.Agent(owner) {
+			r.endBurstLocked(ch, fx)
+		}
+	}
 }
 
 // OnFriendRemoved 立即把对方移出正在进行的转发。
@@ -326,7 +401,7 @@ func (r *Router) OnLeave(d id.DeviceID) {
 	var fx effects
 	r.mu.Lock()
 	for ch, bu := range r.bursts {
-		if bu.Speaker == id.Device(d) {
+		if id.OwnerDevice(bu.Speaker) == d {
 			r.endBurstLocked(ch, &fx)
 			continue
 		}
@@ -343,7 +418,7 @@ func (r *Router) OnDisconnect(d id.DeviceID) {
 	var fx effects
 	r.mu.Lock()
 	for ch, bu := range r.bursts {
-		if bu.Speaker == id.Device(d) {
+		if id.OwnerDevice(bu.Speaker) == d {
 			r.endBurstLocked(ch, &fx)
 		} else {
 			r.dropListenerLocked(bu, d)
@@ -383,9 +458,17 @@ func (r *Router) takeFloorLocked(d id.DeviceID, now time.Time, fx *effects) *Bur
 		fx.interrupt = append(fx.interrupt, d)
 	}
 
+	return r.startBurstLocked(ch, speaker, now, fx, nil)
+}
+
+// startBurstLocked 开始一段发言：听者是同频道里与发言者是好友的设备（小伙伴按主人判断），
+// allow 非 nil 时再按家长控制过滤。
+func (r *Router) startBurstLocked(ch id.ChannelID, speaker id.ParticipantID, now time.Time, fx *effects, allow func(id.DeviceID) bool) *Burst {
+	owner := id.OwnerDevice(speaker)
 	b := &Burst{Channel: ch, Speaker: speaker, StartedAt: now, LastFrameAt: now}
 	for _, m := range r.members.Members(ch) {
-		if m == speaker {
+		md := id.OwnerDevice(m)
+		if md == owner || (allow != nil && !allow(md)) {
 			continue
 		}
 		if ok, _ := r.friends.AreFriends(context.Background(), speaker, m); ok {
@@ -393,7 +476,7 @@ func (r *Router) takeFloorLocked(d id.DeviceID, now time.Time, fx *effects) *Bur
 		}
 	}
 	r.bursts[ch] = b
-	start := &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "start", Source: "peer", From: string(d), Name: r.names(d)}
+	start := &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "start", Source: sourceOf(speaker), From: string(owner), Name: r.names(owner)}
 	for _, l := range b.Listeners {
 		ld := id.OwnerDevice(l)
 		lv := r.dev(ld)
@@ -447,8 +530,15 @@ func (r *Router) stopListenerLocked(b *Burst, d id.DeviceID, fx *effects) {
 	if v.source == SourcePeer {
 		v.source = SourceNone
 	}
-	stop := &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "stop", Source: "peer", From: string(id.OwnerDevice(b.Speaker))}
+	stop := &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "stop", Source: sourceOf(b.Speaker), From: string(id.OwnerDevice(b.Speaker))}
 	fx.queued = append(fx.queued, queued{v.out, stop})
+}
+
+func sourceOf(p id.ParticipantID) string {
+	if p.Kind() == id.KindAgent {
+		return "agent"
+	}
+	return "peer"
 }
 
 // syncListenLocked 让灵矽只在"路由到 AI 且麦克风开着"时收音。
@@ -467,7 +557,11 @@ func (r *Router) expire() {
 	r.mu.Lock()
 	for ch, b := range r.bursts {
 		tailOver := !b.stopAt.IsZero() && now.After(b.stopAt)
-		silent := now.Sub(b.LastFrameAt) > frameTimeout
+		timeout := frameTimeout
+		if b.Speaker.Kind() == id.KindAgent {
+			timeout = agentFrameTimeout
+		}
+		silent := now.Sub(b.LastFrameAt) > timeout
 		if tailOver || silent {
 			r.endBurstLocked(ch, &fx)
 		}

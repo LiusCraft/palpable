@@ -12,7 +12,7 @@
 type DeviceID string        // 设备 MAC，小写冒号分隔，与 hello.device_id 一致
 type ChannelID string       // "zone:<id>" | "group:<id>"
 type GuardianID string
-type ParticipantID string   // "dev:<mac>"；预留 "agt:<mac>"
+type ParticipantID string   // "dev:<mac>" 设备；"agt:<mac>" 设备的小伙伴（id.Agent）
 
 type Kind int               // KindUnknown | KindDevice | KindAgent
 func (p ParticipantID) Kind() Kind

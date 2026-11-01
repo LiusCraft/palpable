@@ -21,6 +21,7 @@ var (
 // Store 汇总各模块的仓储；业务模块只依赖自己那一个接口。
 type Store interface {
 	Devices() DeviceRepo
+	DeviceKeys() DeviceKeyRepo
 	Styles() StyleRepo
 	Guardians() GuardianRepo
 	Friendships() FriendshipRepo
@@ -40,7 +41,11 @@ type Device struct {
 	Guardian     id.GuardianID
 	VoiceConsent bool
 	SpeakerID    string
-	CreatedAt    time.Time
+	FriendPolicy int // 含义由 device 定义
+	// AgentOff 为 true 表示家长不允许自家小伙伴在频道里发言（库里存 agent_in_channel = 0）。
+	AgentOff      bool
+	BlockedAgents []id.DeviceID // 家长屏蔽的别家小伙伴
+	CreatedAt     time.Time
 }
 
 type DeviceRepo interface {
@@ -50,6 +55,18 @@ type DeviceRepo interface {
 	// Delete 在同一事务里删除设备及其好友关系、群成员身份与历史。
 	Delete(ctx context.Context, d id.DeviceID) error
 	ListByGuardian(ctx context.Context, g id.GuardianID) ([]Device, error) // 按建档时间升序
+}
+
+// DeviceKey 是设备的认证公钥（SPKI DER）。一台设备一把，登记后不经协议更换。
+type DeviceKey struct {
+	Device    id.DeviceID
+	PublicKey []byte
+	CreatedAt time.Time
+}
+
+type DeviceKeyRepo interface {
+	Get(ctx context.Context, d id.DeviceID) (DeviceKey, error)
+	Create(ctx context.Context, k DeviceKey) error // 已存在返回 ErrConflict
 }
 
 // Style 记录风格到灵矽智能体的映射；引导智能体的 ID 为 "welcome"，Skin 为空。
@@ -75,20 +92,29 @@ type GuardianRepo interface {
 	Put(ctx context.Context, g Guardian) error // 存在则覆盖
 }
 
-// Friendship 的 A、B 由仓储规范为 A < B，同一对设备只有一条记录。
+// Friendship 的 A、B 由仓储规范为 A < B，同一对设备只有一条记录；交换 A、B 时 ApprovedA、ApprovedB 随之交换。
 type Friendship struct {
-	ID          string
-	A, B        id.DeviceID
-	Status      int
-	ConfirmedBy id.GuardianID
-	CreatedAt   time.Time
+	ID                   string
+	A, B                 id.DeviceID
+	Status               int
+	ConfirmedBy          id.GuardianID
+	ApprovedA, ApprovedB id.GuardianID // 每一侧由谁放行；空表示还没放行
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+func (f *Friendship) normalize() {
+	if f.A > f.B {
+		f.A, f.B = f.B, f.A
+		f.ApprovedA, f.ApprovedB = f.ApprovedB, f.ApprovedA
+	}
 }
 
 type FriendshipRepo interface {
 	Get(ctx context.Context, friendshipID string) (Friendship, error)
 	ByPair(ctx context.Context, a, b id.DeviceID) (Friendship, error) // 参数顺序无关
 	Create(ctx context.Context, f Friendship) error                   // ID 或这一对已存在返回 ErrConflict
-	Update(ctx context.Context, f Friendship) error                   // 只改 Status 与 ConfirmedBy
+	Update(ctx context.Context, f Friendship) error                   // 只改 Status、ConfirmedBy、Approved*、UpdatedAt
 	ListByDevice(ctx context.Context, d id.DeviceID) ([]Friendship, error)
 	ListByStatus(ctx context.Context, status int) ([]Friendship, error) // 启动时装载好友缓存
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { copy } from '../ui/copy'
 import { Button, Chip } from '../ui/components'
-import { parentApi, type Digest, type Friend, type Group, type Kid } from './api'
+import { parentApi, type Digest, type Friend, type FriendPolicy, type Group, type Kid, type Settings } from './api'
 
 // 家长端（Web 模拟）：好友与群聊、今日回顾、家长控制。对应效果图第 7 格。
 // 只调 /api，所有规则（归属、确认、解除）都在服务端。
@@ -18,6 +18,7 @@ export function ParentPanel() {
   const [friends, setFriends] = useState<Friend[]>([])
   const [groups, setGroups] = useState<Group[]>([])
   const [digest, setDigest] = useState<Digest | null>(null)
+  const [settings, setSettings] = useState<Settings>({ friend_policy: 'approve', agent_in_channel: true })
   const [tab, setTab] = useState<Tab>('friends')
   const [error, setError] = useState('')
   const [now, setNow] = useState(0) // 随轮询更新，渲染时不直接取时间
@@ -31,7 +32,8 @@ export function ParentPanel() {
       setKids(ks)
       const id = kid || ks.find((k) => k.online)?.id || ks[0]?.id
       if (!id) return
-      const [f, g, d] = await Promise.all([parentApi.friends(id), parentApi.groups(id), parentApi.digest(id)])
+      const [f, g, d, st] = await Promise.all([parentApi.friends(id), parentApi.groups(id), parentApi.digest(id), parentApi.settings(id)])
+      setSettings(st)
       setFriends(f)
       setGroups(g)
       setDigest(d)
@@ -96,6 +98,7 @@ export function ParentPanel() {
           {kids.length === 0 && <p className="text-xs text-slate-400">{copy.parent.noKids}</p>}
         </div>
         {error && <p className="mt-3 text-xs text-rose-500">{error}</p>}
+        <BindForm onBound={() => void refresh()} />
       </aside>
 
       {/* 好友列表 */}
@@ -104,9 +107,10 @@ export function ParentPanel() {
         {pending.map((f) => (
           <div key={f.request_id} className="mb-2 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm">
             <span className="flex-1">
-              🤝 {f.name || copy.friend.someone} <span className="text-xs text-amber-600">{copy.parent.pending}</span>
+              🤝 {f.name || copy.friend.someone}{' '}
+              <span className="text-xs text-amber-600">{f.waiting_for === 'other' ? copy.parent.pendingOther : copy.parent.pending}</span>
             </span>
-            <Button onClick={() => void act(() => parentApi.confirm(f.request_id))}>{copy.parent.confirm}</Button>
+            {f.waiting_for !== 'other' && <Button onClick={() => void act(() => parentApi.confirm(f.request_id))}>{copy.parent.confirm}</Button>}
           </div>
         ))}
         <ul className="space-y-2 text-sm">
@@ -168,12 +172,41 @@ export function ParentPanel() {
         <h3 className="mb-3 font-semibold text-[#1d3557]">{copy.parent.tabs.control}</h3>
         {tab === 'control' ? (
           <ul className="space-y-2 text-sm">
+            {current && (
+              <li className="space-y-1 pb-2">
+                <div className="text-xs font-medium text-slate-500">{copy.parent.policyTitle}</div>
+                {(['approve', 'notify'] as FriendPolicy[]).map((p) => (
+                  <label key={p} className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="radio"
+                      name="friend-policy"
+                      checked={settings.friend_policy === p}
+                      onChange={() => void act(() => parentApi.saveSettings(current, { ...settings, friend_policy: p }))}
+                    />
+                    {copy.parent.policy[p]}
+                  </label>
+                ))}
+                <label className="flex items-center gap-1.5 pt-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={settings.agent_in_channel}
+                    onChange={(e) => void act(() => parentApi.saveSettings(current, { ...settings, agent_in_channel: e.target.checked }))}
+                  />
+                  {copy.parent.agentInChannel}
+                </label>
+              </li>
+            )}
             {confirmed.map((f) => (
-              <li key={f.device_id} className="flex items-center justify-between">
+              <li key={f.device_id} className="flex flex-wrap items-center justify-between gap-1">
                 <span>{f.name || copy.friend.someone}</span>
-                <Button tone="ghost" onClick={() => void act(() => parentApi.remove(current, f.device_id))}>
-                  {copy.parent.remove}
-                </Button>
+                <span className="flex gap-1">
+                  <Button tone="ghost" onClick={() => void act(() => parentApi.blockAgent(current, f.device_id, !f.agent_blocked))}>
+                    {f.agent_blocked ? copy.parent.unblockAgent : copy.parent.blockAgent}
+                  </Button>
+                  <Button tone="ghost" onClick={() => void act(() => parentApi.remove(current, f.device_id))}>
+                    {copy.parent.remove}
+                  </Button>
+                </span>
               </li>
             ))}
             <li className="pt-2 text-xs text-slate-400">对话原话：</li>
@@ -183,6 +216,19 @@ export function ParentPanel() {
               </li>
             ))}
             {chats === 0 && <li className="text-xs text-slate-400">{copy.parent.noChats}</li>}
+            {current && (
+              <li className="pt-3">
+                <Button
+                  tone="ghost"
+                  onClick={() => {
+                    if (!window.confirm(copy.parent.unbindConfirm)) return
+                    void act(() => parentApi.unbind(current)).then(() => setKid(''))
+                  }}
+                >
+                  {copy.parent.unbind}
+                </Button>
+              </li>
+            )}
           </ul>
         ) : (
           <ul className="space-y-1 text-sm text-slate-600">
@@ -197,6 +243,51 @@ export function ParentPanel() {
           </ul>
         )}
       </section>
+    </div>
+  )
+}
+
+/** 添加玩偶：输入设备播报的绑定码，并勾选监护人同意（声音登记是单独的可选项）。见 docs/trust.md §3。 */
+function BindForm({ onBound }: { onBound: () => void }) {
+  const [code, setCode] = useState('')
+  const [consent, setConsent] = useState(false)
+  const [voice, setVoice] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const submit = async () => {
+    try {
+      await parentApi.bind(code, voice)
+      setCode('')
+      setMsg('')
+      onBound()
+    } catch (e) {
+      setMsg(copy.parent.bindFailed(e instanceof Error ? e.message : ''))
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
+      <div className="font-semibold text-[#1d3557]">{copy.parent.bindTitle}</div>
+      <input
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        inputMode="numeric"
+        placeholder={copy.parent.bindHint}
+        aria-label={copy.parent.bindHint}
+        className="w-full rounded-lg px-2 py-1.5 tracking-widest ring-1 ring-slate-200"
+      />
+      <label className="flex items-start gap-1.5">
+        <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+        {copy.parent.bindConsent}
+      </label>
+      <label className="flex items-start gap-1.5">
+        <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} />
+        {copy.parent.bindVoice}
+      </label>
+      <Button onClick={() => void submit()} disabled={code.length !== 6 || !consent}>
+        {copy.parent.bindSubmit}
+      </Button>
+      {msg && <p className="text-rose-500">{msg}</p>}
     </div>
   )
 }

@@ -5,6 +5,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,22 +20,26 @@ type Message interface {
 }
 
 const (
-	TypeHello         = "hello"
-	TypeWake          = "wake"
-	TypeMicState      = "mic.state"
-	TypeProximity     = "proximity"
-	TypeLocation      = "location"
-	TypeMcp           = "mcp"
-	TypeHelloAck      = "hello.ack"
-	TypeAudioDownlink = "audio.downlink"
-	TypeLight         = "light"
-	TypeHaptic        = "haptic"
-	TypeSound         = "sound"
-	TypeSpeakerState  = "speaker.state"
-	TypePresence      = "presence"
-	TypeChannelState  = "channel.state"
-	TypeFriendState   = "friend.state"
-	TypeError         = "error"
+	TypeHello          = "hello"
+	TypeHelloProof     = "hello.proof"
+	TypeWake           = "wake"
+	TypeMicState       = "mic.state"
+	TypeProximity      = "proximity"
+	TypeLocation       = "location"
+	TypeMcp            = "mcp"
+	TypeHelloAck       = "hello.ack"
+	TypeHelloChallenge = "hello.challenge"
+	TypeAudioDownlink  = "audio.downlink"
+	TypeLight          = "light"
+	TypeHaptic         = "haptic"
+	TypeSound          = "sound"
+	TypeSpeakerState   = "speaker.state"
+	TypePresence       = "presence"
+	TypeChannelState   = "channel.state"
+	TypeFriendState    = "friend.state"
+	TypeBindCode       = "bind.code"
+	TypeBindState      = "bind.state"
+	TypeError          = "error"
 )
 
 // 错误码。
@@ -67,8 +72,30 @@ type Hello struct {
 	DeviceID     id.DeviceID `json:"device_id"`
 	Skin         string      `json:"skin,omitempty"`
 	Firmware     string      `json:"firmware,omitempty"`
+	PubKey       string      `json:"pubkey,omitempty"` // base64(SPKI DER)；见 docs/trust.md §2
 	AudioParams  AudioParams `json:"audio_params"`
 	Capabilities []string    `json:"capabilities"`
+}
+
+// HelloProof 是设备对 HelloChallenge 的签名应答，只在握手阶段有效。
+type HelloProof struct {
+	Type      string `json:"type"`
+	Signature string `json:"signature"`
+}
+
+// SignatureBytes 返回解码后的 r‖s；DecodeUpstream 已保证可解码且为 64 字节。
+func (p *HelloProof) SignatureBytes() []byte {
+	b, _ := base64.RawURLEncoding.DecodeString(p.Signature)
+	return b
+}
+
+// PubKeyBytes 返回解码后的 SPKI DER；没带公钥时为 nil。
+func (h *Hello) PubKeyBytes() []byte {
+	if h.PubKey == "" {
+		return nil
+	}
+	b, _ := base64.StdEncoding.DecodeString(h.PubKey)
+	return b
 }
 
 type Wake struct {
@@ -109,6 +136,23 @@ type HelloAck struct {
 	Type        string      `json:"type"`
 	SessionID   string      `json:"session_id"`
 	AudioParams AudioParams `json:"audio_params"`
+}
+
+type HelloChallenge struct {
+	Type  string `json:"type"`
+	Nonce string `json:"nonce"`
+}
+
+// BindCode 请未绑定的设备播报绑定码。
+type BindCode struct {
+	Type      string `json:"type"`
+	Code      string `json:"code"`
+	ExpiresIn int    `json:"expires_in"`
+}
+
+type BindState struct {
+	Type  string `json:"type"`
+	Event string `json:"event"` // bound | unbound
 }
 
 // AudioDownlink 告知设备服务端下行音频的参数；灵矽的 TTS 采样率可能是 24kHz，
@@ -173,22 +217,26 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-func (*Hello) MsgType() string         { return TypeHello }
-func (*Wake) MsgType() string          { return TypeWake }
-func (*MicState) MsgType() string      { return TypeMicState }
-func (*Proximity) MsgType() string     { return TypeProximity }
-func (*Location) MsgType() string      { return TypeLocation }
-func (*HelloAck) MsgType() string      { return TypeHelloAck }
-func (*AudioDownlink) MsgType() string { return TypeAudioDownlink }
-func (*Light) MsgType() string         { return TypeLight }
-func (*Haptic) MsgType() string        { return TypeHaptic }
-func (*Sound) MsgType() string         { return TypeSound }
-func (*SpeakerState) MsgType() string  { return TypeSpeakerState }
-func (*Presence) MsgType() string      { return TypePresence }
-func (*Error) MsgType() string         { return TypeError }
-func (*Mcp) MsgType() string           { return TypeMcp }
-func (*ChannelState) MsgType() string  { return TypeChannelState }
-func (*FriendState) MsgType() string   { return TypeFriendState }
+func (*Hello) MsgType() string          { return TypeHello }
+func (*HelloProof) MsgType() string     { return TypeHelloProof }
+func (*HelloChallenge) MsgType() string { return TypeHelloChallenge }
+func (*BindCode) MsgType() string       { return TypeBindCode }
+func (*BindState) MsgType() string      { return TypeBindState }
+func (*Wake) MsgType() string           { return TypeWake }
+func (*MicState) MsgType() string       { return TypeMicState }
+func (*Proximity) MsgType() string      { return TypeProximity }
+func (*Location) MsgType() string       { return TypeLocation }
+func (*HelloAck) MsgType() string       { return TypeHelloAck }
+func (*AudioDownlink) MsgType() string  { return TypeAudioDownlink }
+func (*Light) MsgType() string          { return TypeLight }
+func (*Haptic) MsgType() string         { return TypeHaptic }
+func (*Sound) MsgType() string          { return TypeSound }
+func (*SpeakerState) MsgType() string   { return TypeSpeakerState }
+func (*Presence) MsgType() string       { return TypePresence }
+func (*Error) MsgType() string          { return TypeError }
+func (*Mcp) MsgType() string            { return TypeMcp }
+func (*ChannelState) MsgType() string   { return TypeChannelState }
+func (*FriendState) MsgType() string    { return TypeFriendState }
 
 // DecodeUpstream 解析设备上行的文本消息；只接受上行类型，未知或非法一律返回 ErrBadMessage。
 func DecodeUpstream(data []byte) (Message, error) {
@@ -203,6 +251,8 @@ func DecodeUpstream(data []byte) (Message, error) {
 	switch head.Type {
 	case TypeHello:
 		msg = &Hello{}
+	case TypeHelloProof:
+		msg = &HelloProof{}
 	case TypeWake:
 		msg = &Wake{}
 	case TypeMicState:
@@ -249,6 +299,15 @@ func validate(msg Message) error {
 		}
 		if m.AudioParams != DefaultAudioParams() {
 			return errors.New("unsupported audio_params")
+		}
+		if m.PubKey != "" {
+			if b, err := base64.StdEncoding.DecodeString(m.PubKey); err != nil || len(b) == 0 || len(m.PubKey) > 256 {
+				return errors.New("pubkey must be base64 SPKI DER")
+			}
+		}
+	case *HelloProof:
+		if b, err := base64.RawURLEncoding.DecodeString(m.Signature); err != nil || len(b) != 64 {
+			return errors.New("signature must be 64 bytes base64url")
 		}
 	case *Wake:
 		if m.Source != "voice" && m.Source != "touch" {

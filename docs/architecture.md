@@ -35,7 +35,10 @@
 | D3 | **按皮套共用风格智能体。** 设备以自己的 MAC 上线，后端按 `skin` 自动选定风格智能体并在灵矽注册 | 开通零配置；智能体数量只和皮套款数相当 | 声纹"只认主人"做不到（灵矽里是智能体级配置），见 [§4](#4-设备如何组织) |
 | D4 | **业务工具走设备端 MCP 代理，不做云端 MCP。** 网关把设备自带工具与业务工具合并成一份列表给 AI | 调用身份天然来自连接，不需另做鉴权；不依赖灵矽控制台配置 | 网关要解析并合并 MCP 消息；云端方案留作 [备选](linx-integration.md#备选云端-mcp) |
 | D5 | **设备行为与 Web 展示分开。** 协议里只有设备真的会做的事；开箱动画、公园、地图、手机窗口只在 Web | 保证 Web 模拟器换成固件时服务端不用改 | 演示里的一些画面需要另走 `/world` 等非设备通道 |
-| D6 | **频道成员按"参与者"建模。** 现在只有设备，预留小伙伴智能体入频道 | 将来让 AI 参与多人对话时，不必改频道、好友与设备协议 | 现在多一层 `ParticipantID` 类型，见 [§6](#6-预留小伙伴智能体作为频道成员) |
+| D6 | **频道成员按"参与者"建模。** 设备 `dev:<mac>` 与小伙伴智能体 `agt:<mac>` 平级 | 小伙伴进频道时没有改频道、好友与 voice 的转发规则 | 多一层 `ParticipantID` 类型；小伙伴的音频要从主人的 AI 下行里分流，见 [§6](#6-小伙伴智能体作为频道成员) |
+| D10 | **设备认证用每台设备一把 P-256 密钥的挑战应答，服务端只存公钥** | 伪造 MAC 不能再冒充别人的设备；库泄露也不能签名；不依赖设备时钟 | 每次握手多一个来回；固件要保管私钥（Flash 加密），见 [trust.md §2](trust.md#2-设备身份与认证) |
+| D11 | **家长先绑定，设备才提供服务**；绑定用设备播报的 6 位短码 | 陪伴类 AI 对不满 14 岁的孩子须先取得监护人同意；短码证明家长就在设备旁边 | 开箱多一步；演示用 `demo.guardian` 自动绑定跳过，见 [trust.md §3](trust.md#3-绑定家长先开通孩子再认主) |
+| D12 | **交朋友两关：两个孩子当面说"好"，两家监护人各自放行** | 回应"默认交友"的质疑，贴近陌生人社交监管取向；每家可为自家孩子放宽 | 演示需预置"孩子自己交友"才能一步成为好友，见 [trust.md §4](trust.md#4-交朋友) |
 | D7 | **领域层只发事件、不发设备消息。** 下行的 `channel.state`、`friend.state` 等由编排层 `app` 订阅事件后翻译 | 领域层不知道 WebSocket，可用假实现单测；协议变化不波及业务规则 | 多一个编排模块，事件需要有序投递 |
 | D8 | **新设备先由系统级"引导智能体"接待，起名后交棒给风格智能体。** 引导智能体不属于任何皮套，只服务 `stage` 未完成的设备：欢迎、请孩子起名、（经监护人同意后）采集一段声音登记声纹 | 孩子的名字和声音在第一句话就能拿到；风格智能体从第一次对话起就认识孩子，提示词不必再兼顾"初次见面"；引导流程可独立迭代 | 交棒要切换智能体并重连灵矽会话；记忆容器在交棒时才建立，引导期的对话不迁移；多一份提示词与音色要维护 |
 | D9 | **ESP32 复用小智的板级驱动，应用层实现可感协议。** 固定上游提交后生成硬件源码树，以 `firmware/main/` 替换应用层，保留配网、编解码与本地唤醒 | 支持现有小智硬件，设备与 Web 共用服务端协议；避开小智云激活与另一套对话状态机 | 需维护上游适配补丁；每个板型及 GPS / BLE / NFC 传感器仍需单独接线与验收，见 [固件说明](../firmware/README.md) |
@@ -117,12 +120,13 @@
 
 ### 5.1 设备上线、开通与起名
 
-1. 设备连上 `/ws`，发 `hello(MAC, skin, capabilities)`；`gateway` 校验后回 `hello.ack`，调用 `app.OnConnect`。
-2. `app` 调 `device.Ensure`。失败 → 下发 `error`，跳过后续步骤，设备仍可对讲。
-3. `app` 调 `bridge/linx.Open`：以该 MAC 和档案里的 `agent_id`（新设备是引导智能体）拨号灵矽，`hello.agent_params` 注入已知的名字与"是否做声音登记"；就绪后向设备下发 `audio.downlink`。
-4. `stage=fresh` 时，`app` 调 `Say` 让引导智能体欢迎并请孩子起名。孩子说出名字后，AI 调用 `self.profile.set_names` → `device.SetNames` → `stage=named`，`device` 发 `Named` 事件。
-5. （可选）有监护人同意时，引导智能体请孩子跟着说一句话，再调 `self.voiceprint.enroll` → `device.EnrollVoice`；失败只记日志，不影响下一步。
-6. `app` 收到 `Named`，等 AI 说完（`OnAIState` 回到 idle）后调 `device.Handoff`：切到风格智能体、写记忆焦点、`stage=ready`；再让 `bridge/linx` 关闭旧会话并以新 `agent_id` 重新 `Open`，由新智能体用孩子起的名字做第一句问候。交棒失败则保持 `stage=named`，下次上线重试。
+1. 设备连上 `/ws`，发 `hello(MAC, skin, capabilities, pubkey)`；`gateway` 发挑战、验签后回 `hello.ack`，调用 `app.OnConnect`（[trust.md §2](trust.md#2-设备身份与认证)）。
+2. `app` 调 `device.Ensure`。失败 → 下发 `error`，跳过后续步骤。
+3. 设备还没绑定家长 → 下发 `bind.code`，设备播报 6 位码；家长在家长端输入并同意后，`device.Bound` 事件让流程继续。绑定前设备的一切上行都被丢弃（[trust.md §3](trust.md#3-绑定家长先开通孩子再认主)）。
+4. `app` 调 `bridge/linx.Open`：以该 MAC 和档案里的 `agent_id`（新设备是引导智能体）拨号灵矽，`hello.agent_params` 注入已知的名字与"是否做声音登记"；就绪后向设备下发 `audio.downlink`。
+5. `stage=fresh` 时，`app` 调 `Say` 让引导智能体欢迎并请孩子起名。孩子说出名字后，AI 调用 `self.profile.set_names` → `device.SetNames` → `stage=named`，`device` 发 `Named` 事件。
+6. （可选）有监护人同意时，引导智能体请孩子跟着说一句话，再调 `self.voiceprint.enroll` → `device.EnrollVoice`；失败只记日志，不影响下一步。
+7. `app` 收到 `Named`，等 AI 说完（`OnAIState` 回到 idle）后调 `device.Handoff`：切到风格智能体、写记忆焦点、`stage=ready`；再让 `bridge/linx` 关闭旧会话并以新 `agent_id` 重新 `Open`，由新智能体用孩子起的名字做第一句问候。交棒失败则保持 `stage=named`，下次上线重试。
 
 ### 5.2 对 AI 说话
 
@@ -152,9 +156,12 @@
 
 ### 5.4 贴近成为好友
 
+规则见 [trust.md §4](trust.md#4-交朋友)，状态机见 [relation](modules/relation.md#状态机)。
+
 1. 两台设备各自上报 `proximity`；`app` 交给 `relation.OnProximity`。
-2. 双方都持续靠近 1.5 秒 → `relation` 生成待确认请求，发出 `Proposed` 事件；`app` 下发 `friend.state{pending}` 与振动。
-3. 家长确认（演示中可由孩子确认）→ `Confirmed` 事件 → `friend.state{confirmed}`；此后 `voice` 计算听者时对方会被纳入。
+2. 双方都持续靠近 1.5 秒 → `Asked` 事件；`app` 下发 `friend.state{asking}` 与振动，两边的小伙伴各问一句"要和 X 交朋友吗"。
+3. 两个孩子 60 秒内都说"好"（AI 调 `self.friends.accept` → `relation.Assent`）。有人说"不要"或超时 → `Dropped`，不打扰家长。
+4. 每一侧按自家家长的交友方式：自动放行，或等这一侧家长在家长端批准。两侧都放行 → `Confirmed` → `friend.state{confirmed}`；此后 `voice` 计算听者时对方会被纳入。
 
 ### 5.5 进入公园
 
@@ -162,28 +169,31 @@
 2. 孩子同意 → AI 调用业务工具 `self.zone.join` → `zone.JoinCurrent` → `channel.JoinZone`。
 3. 离开区块时 `zone` 直接 `channel.LeaveZone`，不询问。
 
-## 6. 预留：小伙伴智能体作为频道成员
+## 6. 小伙伴智能体作为频道成员
 
-现在不做，但边界要留好。智能体不是频道的一部分，而是和设备平级的参与者；频道只管"有哪些参与者"。
+智能体不是频道的一部分，而是和设备平级的参与者 `agt:<mac>`；频道只管"有哪些参与者"。同意与家长控制见 [trust.md §5](trust.md#5-小伙伴进频道)。
 
-| 现在 | 将来加入智能体时 |
+```text
+主人："小龙，跟大家讲个笑话"（wake → AI 回合）
+  AI 调 self.channel.speak ──▶ app.AgentSpeak
+       device.AgentAudience(主人, 频道里其他设备)   自家家长关了 → 失败；对方家长屏蔽的听者记下
+       voice.ArmAgent(主人, 屏蔽名单)              20 秒内开口的下一段话算数
+  AI 开始说话（OnAIState speaking）──▶ voice 以 agt:<mac> 抢发言权；被占就只有主人听到
+       听者 = 同频道、与主人是好友、家长没屏蔽它的设备；speaker.state{source: agent}
+  bridge/linx 下发 TTS 帧 ──▶ agentTap：照常给主人设备，同时 voice.OnAgentFrame 转给听者
+  AI 说完（OnAIState idle）或主人开口 ──▶ 结束这段发言
+```
+
+| 规则 | 怎么做到 |
 | --- | --- |
-| 参与者只有设备 `dev:<mac>` | 多一种 `agt:<mac>`，由同一台设备的小伙伴扮演 |
-| 听者收到 Opus 帧，下发给设备 | 智能体听者收到同样的帧，喂给它的灵矽会话 |
-| 发言人是设备，靠 `mic.state` 开始 | 智能体发言是 TTS 音频，同样要先抢发言权 |
-| `AreFriends` 看设备 | 智能体按所属设备判断：`OwnerDevice(p)` |
+| 只听主人 | 小伙伴的输入只有主人设备的 AI 回合；频道里别家孩子的音频从不送进它的灵矽会话 |
+| 只在点名时开口 | 必须先有 `self.channel.speak`，且一次只管一段话 |
+| 只到好友 | 听者由 `relation.AreFriends(agt:<mac>, 听者)` 计算，智能体按主人判断 |
+| 一次一个声音 | 和设备共用发言权；小伙伴说话时别人开口收到 `busy`，主人开口则小伙伴让路 |
 
-**现在就要做对的接缝**
+**接缝**：频道成员、发言人、听者都用 `ParticipantID`；`voice` 只经 `Sink` 收发；`relation.AreFriends` 经 `OwnerDevice` 解析；`bridge/linx` 会话不变，`app` 只在交给它的 `DeviceLink` 外包一层 `agentTap`。
 
-1. 频道成员、发言人、听者都用 `ParticipantID`，不用 `DeviceID`。
-2. `voice` 只经 `Sink` 收发，不知道对方是设备还是智能体。
-3. `relation.AreFriends` 接受参与者，经 `OwnerDevice` 解析；家长控制与屏蔽自动适用于智能体。
-4. `bridge/linx` 会话的"上行音频来源"可替换：现在是所属设备的麦克风，将来可以是频道里的发言；会话与身份不变，不会因多开会话与同一 MAC 冲突。
-5. 发言权保证同一时刻只有一人说话，智能体拿到的是串行的一句句话，不需要混音。
-
-**将来才新增**：智能体何时开口的策略（被点名、停顿后）；把发言人名字随音频带给智能体；`speaker.state` 增加可选 `from_kind`；智能体听到与说出的内容进历史、家长可关闭（上线前必须定）。
-
-**不会变**：设备协议的既有消息、`gateway`、`relation` 状态机、`zone`、家长端接口。
+**还没做**：自动参与（不点名就插话）；把频道里的话转给小伙伴当上下文（涉及别家孩子的数据，需要对方家长同意）；小伙伴在频道里说过的话进历史。
 
 ## 7. 设备抽象
 
@@ -209,7 +219,8 @@ Web 模拟器与固件各自实现下面七项，其余全在服务端。
 | --- | --- | --- |
 | 非好友的音频不转发 | `voice` 计算听者时与 `relation.AreFriends` 求交 | S5 语音验收第 2 条 |
 | 非好友不出现在在线列表 | `app` 下发 `presence`、`channel.state` 成员前经 `relation.FilterFriends` 过滤 | S4 验收 |
-| 好友需确认才生效 | `relation` 状态机保留 `Pending`；只有 `Confirm` 能转为好友 | S3 验收 |
+| 好友要两个孩子同意、两家监护人放行 | `relation` 状态机：asking → pending → confirmed；每侧放行只能由该侧监护人（`parentapi` 校验归属）或该侧家长的自动设置给出 | S15 验收 |
+| 未绑定设备不提供服务 | `app.serving` 为假时丢弃全部上行；`gateway` 先验签再登记会话 | S13、S14 验收 |
 | 家长只看自家孩子 | `parentapi` 每个接口校验孩子归属 | S10 验收 |
 | 灵矽令牌不出服务端 | 只由 `linxapi`、`bridge/linx` 从 YAML 配置文件（`internal/config`）读取 | 代码审查：`web/` 中无令牌 |
 | 演示地图不泄露位置 | `/world` 只在演示模式注册 | 默认启动时访问 `/world` 返回 404 |
@@ -241,11 +252,8 @@ Web 模拟器与固件各自实现下面七项，其余全在服务端。
 
 | 问题 | 影响 | 当前假设 |
 | --- | --- | --- |
-| 好友由一方家长确认，还是双方家长都确认？ | `relation` 状态机、家长端 | 演示：任一方确认即生效 |
 | 家长端是否进入演示？AGENTS.md 主线不含，产品文档曾列入 | 任务排期 | 主线之外的加演项，排在 M4 |
 | 灵矽聊天记录能否按设备筛选？风格智能体被多台设备共用 | `history` 会不会混入别的孩子的对话 | 消息接口带 `macAddress`：只展示标着本机 MAC 的消息，没有 MAC 的不展示 |
-| 设备如何绑定家长？ | `device.Profile.Guardian`、家长端 | 演示：启动时预置；产品：家长端扫码绑定 |
-| 声纹登记的监护人同意在哪一步取得？新设备开箱时家长可能还没绑定 | 引导流程是否包含声音登记 | 演示：预置同意标记；产品：绑定家长时一并取得，未同意则引导期跳过声音登记，之后可补登记 |
 | 引导期的声音样本从哪里来？灵矽的声纹登记只收 `audio_url`，引导智能体被所有新设备共用，聊天记录又不能确认能按设备筛选 | 声音登记能否做 | 联调验证；筛不出就不做声音登记，不改为服务端暂存音频 |
 
 ## 12. 风险

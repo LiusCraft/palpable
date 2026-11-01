@@ -47,7 +47,7 @@
 ## 功能
 
 - **语音唤醒**：免按键，叫伙伴的名字即可对话，可随时打断
-- **贴近即连**：设备靠近，震动 + 提示音确认，建立好友关系
+- **贴近即连**：设备靠近，两个孩子都说"好"，再经两家家长放行（家长可设为"自己交友、事后通知"），建立好友关系
 - **区域 / 群语音频道**：进入公园等区域可加入区域频道；4 位数字码建群、加群
 - **AI 情感陪伴与游戏**：理解语气，讲故事、主持语音游戏
 - **家长控制**：好友确认、录音与摘要查看
@@ -126,13 +126,14 @@ AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端
 | 键 | 说明 |
 | --- | --- |
 | `addr` | 监听地址，默认 `:8080` |
+| `auth.enrollment` | 设备认证：`open`（首次上线登记公钥，默认）、`manifest`（只认出厂清单）、`off`（不认证，仅供固件过渡），见 [trust.md](docs/trust.md#2-设备身份与认证) |
 | `linx.ws_url` | 灵矽 WebSocket 地址，例如 `wss://xrobo-io.qiniuapi.com/v1/ws/`；为空则不启用 AI 对话 |
 | `linx.token` | Bearer 令牌，WebSocket 与 REST 共用 |
 | `linx.api_base` | 灵矽 REST 地址，默认 `https://xrobo.qiniu.com` |
 | `linx.voiceprint_base` | 声纹服务地址（演示环境） |
-
 | `linx.ota_url` | 灵矽 OTA 地址，用于激活预注册的设备 |
-| `demo.guardian` / `demo.guardian_name` | 演示：新设备自动绑定到这个家长 |
+| `demo.guardian` / `demo.guardian_name` | 演示：新设备自动绑定到这个家长（产品里由家长输入设备播报的绑定码，见 [trust.md](docs/trust.md#3-绑定家长先开通孩子再认主)） |
+| `demo.manual_bind` | 演示绑定流程：不自动绑定，新设备显示并播报 6 位绑定码，在家长端"添加玩偶"输入 |
 | `demo.voice_consent` | 演示：预置监护人对声纹登记的同意 |
 | `demo.parent_token` | 家长端 `/api` 的令牌，代表 `demo.guardian`；为空则不开放家长端 |
 | `demo.world` | 开放 `/world` 演示地图；会暴露所有设备位置，默认关闭 |

@@ -5,12 +5,14 @@
   "description": "可感设备协议（文本帧）。音频为独立的二进制 Opus 帧，不在此 schema 内。设备↔服务端所有 JSON 消息都必须匹配 oneOf 中的一项。",
   "oneOf": [
     { "$ref": "#/$defs/Hello" },
+    { "$ref": "#/$defs/HelloProof" },
     { "$ref": "#/$defs/Wake" },
     { "$ref": "#/$defs/MicState" },
     { "$ref": "#/$defs/Proximity" },
     { "$ref": "#/$defs/Location" },
     { "$ref": "#/$defs/Mcp" },
     { "$ref": "#/$defs/HelloAck" },
+    { "$ref": "#/$defs/HelloChallenge" },
     { "$ref": "#/$defs/AudioDownlink" },
     { "$ref": "#/$defs/Light" },
     { "$ref": "#/$defs/Haptic" },
@@ -19,6 +21,8 @@
     { "$ref": "#/$defs/Presence" },
     { "$ref": "#/$defs/ChannelState" },
     { "$ref": "#/$defs/FriendState" },
+    { "$ref": "#/$defs/BindCode" },
+    { "$ref": "#/$defs/BindState" },
     { "$ref": "#/$defs/Error" }
   ],
   "$defs": {
@@ -53,12 +57,23 @@
         "device_id": { "$ref": "#/$defs/MAC" },
         "skin": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$", "description": "皮套款式，服务端据此选风格智能体；缺省或未知时用默认风格" },
         "firmware": { "type": "string", "maxLength": 64 },
+        "pubkey": { "type": "string", "minLength": 1, "maxLength": 256, "description": "设备公钥 base64(SPKI DER)，ECDSA P-256；首次登记时必填，之后可省略，与已登记的不一致时拒绝。见 docs/trust.md §2" },
         "audio_params": { "$ref": "#/$defs/AudioParams" },
         "capabilities": {
           "type": "array",
           "items": { "$ref": "#/$defs/Capability" },
           "uniqueItems": true
         }
+      }
+    },
+    "HelloProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "signature"],
+      "description": "对 hello.challenge 的应答：ECDSA-P256-SHA256 对 \"palpable-auth-v1\\n\" + device_id + \"\\n\" + nonce 签名，r‖s 共 64 字节，base64url 无填充",
+      "properties": {
+        "type": { "const": "hello.proof" },
+        "signature": { "type": "string", "minLength": 86, "maxLength": 86 }
       }
     },
     "Wake": {
@@ -120,6 +135,16 @@
         "audio_params": { "$ref": "#/$defs/AudioParams" }
       }
     },
+    "HelloChallenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "nonce"],
+      "description": "认证挑战：服务端在 hello 之后、hello.ack 之前发送；设备须在握手时限内回 hello.proof",
+      "properties": {
+        "type": { "const": "hello.challenge" },
+        "nonce": { "type": "string", "minLength": 43, "maxLength": 43, "description": "32 字节随机数，base64url 无填充" }
+      }
+    },
     "AudioDownlink": {
       "type": "object",
       "additionalProperties": false,
@@ -167,9 +192,9 @@
       "properties": {
         "type": { "const": "speaker.state" },
         "state": { "enum": ["start", "stop"] },
-        "source": { "enum": ["ai", "peer"] },
-        "from": { "type": "string", "description": "source 为 peer 时的发言设备" },
-        "name": { "type": "string", "maxLength": 32, "description": "source 为 peer 时发言者小伙伴的名字，供设备展示" }
+        "source": { "enum": ["ai", "peer", "agent"], "description": "agent 表示别人的小伙伴在频道里发言，音频参数与 audio.downlink 相同" },
+        "from": { "type": "string", "description": "source 为 peer 或 agent 时的发言设备（agent 为该小伙伴的主人设备）" },
+        "name": { "type": "string", "maxLength": 32, "description": "source 为 peer 或 agent 时发言者小伙伴的名字，供设备展示" }
       }
     },
     "Presence": {
@@ -211,12 +236,33 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "event", "device_id"],
-      "description": "好友关系变化；pending 时设备振动并提示，确认由家长端完成",
+      "description": "好友关系变化：asking 时小伙伴问孩子要不要交朋友；pending 表示在等家长同意。规则见 docs/trust.md §4",
       "properties": {
         "type": { "const": "friend.state" },
-        "event": { "enum": ["pending", "confirmed", "removed"] },
+        "event": { "enum": ["asking", "pending", "confirmed", "removed"] },
         "device_id": { "$ref": "#/$defs/MAC" },
         "name": { "type": "string", "maxLength": 32 }
+      }
+    },
+    "BindCode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "expires_in"],
+      "description": "设备尚未绑定监护人：设备逐位播报绑定码，家长在家长端输入后完成绑定。绑定前服务端不提供任何服务",
+      "properties": {
+        "type": { "const": "bind.code" },
+        "code": { "type": "string", "minLength": 6, "maxLength": 6, "description": "6 位数字" },
+        "expires_in": { "type": "number", "minimum": 1, "maximum": 3600, "description": "有效秒数；过期后服务端下发新码" }
+      }
+    },
+    "BindState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "event"],
+      "description": "绑定变化：bound 后进入起名流程；unbound 表示家长已解绑，设备回到出厂状态",
+      "properties": {
+        "type": { "const": "bind.state" },
+        "event": { "enum": ["bound", "unbound"] }
       }
     },
     "Error": {

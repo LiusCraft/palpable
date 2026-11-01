@@ -1,6 +1,9 @@
 package gateway
 
 import (
+	"context"
+	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 )
 
@@ -179,7 +183,7 @@ func TestSecondHelloRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "hello already received") {
+	if !strings.Contains(string(data), "handshake already completed") {
 		t.Fatalf("expected duplicate hello error, got %s", data)
 	}
 }
@@ -265,9 +269,141 @@ func TestReadHelloErrors(t *testing.T) {
 			client, server := connPair(t)
 			defer server.Close()
 			tt.send(client)
-			if _, err := readHello(server); err == nil || !strings.Contains(err.Error(), tt.want) {
+			if _, err := readHello(server, time.Now().Add(time.Second)); err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("readHello error = %v, want containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// fakeAuth 认为第一个字节为 1 的签名有效。
+type fakeAuth struct{ required bool }
+
+func (f fakeAuth) Required() bool { return f.required }
+func (f fakeAuth) Verify(_ context.Context, _ id.DeviceID, _ []byte, nonce string, sig []byte) error {
+	if len(nonce) != 43 || sig[0] != 1 {
+		return errors.New("bad proof")
+	}
+	return nil
+}
+
+func proofJSON(ok bool) string {
+	sig := make([]byte, 64)
+	if ok {
+		sig[0] = 1
+	}
+	return `{"type":"hello.proof","signature":"` + base64.RawURLEncoding.EncodeToString(sig) + `"}`
+}
+
+func readType(t *testing.T, ws *websocket.Conn) string {
+	t.Helper()
+	_, data, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func authedHandshake(t *testing.T, srvURL string) *websocket.Conn {
+	t.Helper()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srvURL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ws.Close() })
+	_ = ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = ws.WriteMessage(websocket.TextMessage, []byte(helloJSON))
+	if m := readType(t, ws); !strings.Contains(m, `"hello.challenge"`) {
+		t.Fatalf("want challenge, got %s", m)
+	}
+	_ = ws.WriteMessage(websocket.TextMessage, []byte(proofJSON(true)))
+	if m := readType(t, ws); !strings.Contains(m, `"hello.ack"`) {
+		t.Fatalf("want ack, got %s", m)
+	}
+	return ws
+}
+
+func TestAuthHandshake(t *testing.T) {
+	gw := newGateway(nil)
+	gw.SetAuth(fakeAuth{required: true})
+	srv := httptest.NewServer(gw)
+	t.Cleanup(srv.Close)
+	authedHandshake(t, srv.URL)
+	if _, ok := gw.Session("02:00:00:00:00:01"); !ok {
+		t.Fatal("session not registered")
+	}
+}
+
+func TestAuthRejectsBadProof(t *testing.T) {
+	for name, second := range map[string]string{
+		"bad signature": proofJSON(false),
+		"not a proof":   `{"type":"wake","source":"touch"}`,
+		"garbage":       `{`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			gw := newGateway(nil)
+			gw.SetAuth(fakeAuth{required: true})
+			ws := dial(t, gw)
+			_ = ws.WriteMessage(websocket.TextMessage, []byte(helloJSON))
+			readType(t, ws) // challenge
+			_ = ws.WriteMessage(websocket.TextMessage, []byte(second))
+			if m := readType(t, ws); !strings.Contains(m, `"unauthorized"`) {
+				t.Fatalf("want unauthorized, got %s", m)
+			}
+			if _, ok := gw.Session("02:00:00:00:00:01"); ok {
+				t.Fatal("unauthenticated session registered")
+			}
+		})
+	}
+}
+
+func TestAuthOffSkipsChallenge(t *testing.T) {
+	gw := newGateway(nil)
+	gw.SetAuth(fakeAuth{required: false})
+	ws := dial(t, gw)
+	_ = ws.WriteMessage(websocket.TextMessage, []byte(helloJSON))
+	if m := readType(t, ws); !strings.Contains(m, `"hello.ack"`) {
+		t.Fatalf("want ack, got %s", m)
+	}
+}
+
+// 认证通过的新连接顶掉旧连接：旧连接收到 replaced 并断开，旧会话清理完后新会话才登记。
+func TestAuthenticatedReconnectReplacesOldSession(t *testing.T) {
+	rec := newRecorder()
+	gw := newGateway(rec)
+	gw.SetAuth(fakeAuth{required: true})
+	srv := httptest.NewServer(gw)
+	t.Cleanup(srv.Close)
+
+	old := authedHandshake(t, srv.URL)
+	first, _ := gw.Session("02:00:00:00:00:01")
+	authedHandshake(t, srv.URL)
+
+	if m := readType(t, old); !strings.Contains(m, "replaced") {
+		t.Fatalf("old connection should be told it was replaced, got %s", m)
+	}
+	select {
+	case <-rec.closed:
+	case <-time.After(time.Second):
+		t.Fatal("old session not cleaned up")
+	}
+	now, ok := gw.Session("02:00:00:00:00:01")
+	if !ok || now == first {
+		t.Fatal("new session should replace the old one")
+	}
+	if _, _, err := old.ReadMessage(); err == nil {
+		t.Fatal("old connection should be closed")
+	}
+}
+
+func TestHandshakeMessagesRejectedAfterHandshake(t *testing.T) {
+	rec := newRecorder()
+	gw := newGateway(rec)
+	conn := dial(t, gw)
+	_ = conn.WriteMessage(websocket.TextMessage, []byte(helloJSON))
+	readType(t, conn)
+	_ = conn.WriteMessage(websocket.TextMessage, []byte(proofJSON(true)))
+	if m := readType(t, conn); !strings.Contains(m, "handshake already completed") {
+		t.Fatalf("got %s", m)
 	}
 }

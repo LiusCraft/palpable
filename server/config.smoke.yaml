@@ -1,5 +1,8 @@
 addr: ":8080"
 db_path: ":memory:"
 
+auth:
+  enrollment: "off"   # 固件尚未实现认证握手；实现后删除这一段
+
 demo:
   world: true

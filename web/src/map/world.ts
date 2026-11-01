@@ -27,7 +27,7 @@ export interface WorldZone {
 interface Friendship {
   a: string
   b: string
-  status: 'pending' | 'confirmed'
+  status: 'asking' | 'pending' | 'confirmed'
 }
 
 interface WorldEvent {
@@ -41,7 +41,7 @@ interface WorldEvent {
   joined?: boolean
   speaking?: boolean
   friend?: string
-  status?: 'pending' | 'confirmed' | 'removed'
+  status?: 'asking' | 'pending' | 'confirmed' | 'removed'
   devices?: WorldDevice[]
   friends?: Friendship[]
   zones?: WorldZone[]

@@ -2,6 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,6 +22,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/config"
 	"github.com/LiusCraft/palpable/server/internal/device"
 	"github.com/LiusCraft/palpable/server/internal/id"
+	"github.com/LiusCraft/palpable/server/internal/protocol"
 	"github.com/LiusCraft/palpable/server/internal/relation"
 	"github.com/LiusCraft/palpable/server/internal/store"
 	"github.com/LiusCraft/palpable/server/internal/zone"
@@ -134,12 +141,15 @@ func TestRelationEventsReachBothDevices(t *testing.T) {
 	const other id.DeviceID = "02:00:00:00:00:02"
 	wsA, wsB := connect(t, srv, mac), connect(t, srv, other)
 
-	a.onRelation(context.Background(), relation.Event{Kind: relation.Proposed, Friendship: relation.Friendship{ID: "f1", A: mac, B: other}})
-	for _, c := range []struct {
+	f := relation.Friendship{ID: "f1", A: mac, B: other}
+	conns := []struct {
 		ws   *websocket.Conn
 		peer id.DeviceID
-	}{{wsA, other}, {wsB, mac}} {
-		if got := readText(t, c.ws); !strings.Contains(got, `"type":"friend.state"`) || !strings.Contains(got, `"event":"pending"`) || !strings.Contains(got, string(c.peer)) {
+	}{{wsA, other}, {wsB, mac}}
+	// 靠近：先问孩子，带振动和提示音。
+	a.onRelation(context.Background(), relation.Event{Kind: relation.Asked, Friendship: f})
+	for _, c := range conns {
+		if got := readText(t, c.ws); !strings.Contains(got, `"type":"friend.state"`) || !strings.Contains(got, `"event":"asking"`) || !strings.Contains(got, string(c.peer)) {
 			t.Fatalf("friend.state = %s", got)
 		}
 		if got := readText(t, c.ws); !strings.Contains(got, `"type":"haptic"`) {
@@ -147,6 +157,15 @@ func TestRelationEventsReachBothDevices(t *testing.T) {
 		}
 		if got := readText(t, c.ws); !strings.Contains(got, `"name":"friend"`) {
 			t.Fatalf("sound = %s", got)
+		}
+	}
+	// 两个孩子都说好：等家长；询问作罢：清掉提示。
+	for kind, want := range map[relation.EventKind]string{relation.Proposed: "pending", relation.Dropped: "removed"} {
+		a.onRelation(context.Background(), relation.Event{Kind: kind, Friendship: f})
+		for _, c := range conns {
+			if got := readText(t, c.ws); !strings.Contains(got, `"event":"`+want+`"`) {
+				t.Fatalf("%v: friend.state = %s", kind, got)
+			}
 		}
 	}
 }
@@ -406,5 +425,53 @@ func TestNamingHandsOffToStyleAgent(t *testing.T) {
 	p, _ := a.devices.Profile(ctx, mac)
 	if p.Stage != device.StageReady || p.StyleID != "dragon" {
 		t.Fatalf("profile after handoff = %+v", p)
+	}
+}
+
+// 端到端：open 模式下设备用自己的 P-256 私钥通过挑战，第二次上线不带公钥也能通过；
+// 别人拿另一把钥匙冒充同一 MAC 被拒。
+func TestDeviceAuthEndToEnd(t *testing.T) {
+	a, err := newApp(context.Background(), deps{store: store.NewMemory(), enrollment: device.EnrollOpen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a.Handler())
+	t.Cleanup(srv.Close)
+	const mac = "02:00:00:00:00:0a"
+
+	dialAuth := func(key *ecdsa.PrivateKey, withKey bool) string {
+		ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ws.Close()
+		hello := strings.Replace(helloJSON, "02:00:00:00:00:01", mac, 1)
+		if withKey {
+			der, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+			hello = strings.Replace(hello, `"skin"`, `"pubkey":"`+base64.StdEncoding.EncodeToString(der)+`","skin"`, 1)
+		}
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(hello))
+		var ch protocol.HelloChallenge
+		if err := json.Unmarshal([]byte(readText(t, ws)), &ch); err != nil || ch.Nonce == "" {
+			t.Fatalf("want challenge: %v", err)
+		}
+		h := sha256.Sum256(device.SignedMessage(mac, ch.Nonce))
+		r, s, _ := ecdsa.Sign(rand.Reader, key, h[:])
+		sig := make([]byte, 64)
+		r.FillBytes(sig[:32])
+		s.FillBytes(sig[32:])
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello.proof","signature":"`+base64.RawURLEncoding.EncodeToString(sig)+`"}`))
+		return readText(t, ws)
+	}
+	own, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if got := dialAuth(own, true); !strings.Contains(got, "hello.ack") {
+		t.Fatalf("first enrollment: %s", got)
+	}
+	if got := dialAuth(own, false); !strings.Contains(got, "hello.ack") {
+		t.Fatalf("returning device: %s", got)
+	}
+	evil, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if got := dialAuth(evil, true); !strings.Contains(got, "unauthorized") {
+		t.Fatalf("impostor should be rejected: %s", got)
 	}
 }

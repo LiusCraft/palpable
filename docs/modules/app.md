@@ -30,11 +30,12 @@
 | 设备事件 | 调用 |
 | --- | --- |
 | 连接建立 | 后台 `connect`（见下） |
+| 任何上行（设备未绑定时） | 丢弃：`serving(d)` 为假时不进 AI、频道、好友、位置（见 [trust.md §3](../trust.md#3-绑定家长先开通孩子再认主)） |
 | `mic.state` / `wake` / 音频帧 | `voice.OnMicState / OnWake / OnMicFrame` |
 | `proximity` | `relation.OnProximity` |
 | `location` | `world.Publish(pos)` + `zone.OnLocation` |
 | `mcp` | `mcp.OnDeviceMCP` |
-| 断开 | `voice.OnDisconnect`、`mcp.Forget`、`bridge.Close`、`channel.LeaveZone`、`zone.Forget` |
+| 断开 | 撤销绑定码、`voice.OnDisconnect`、`mcp.Forget`、`bridge.Close`、`channel.LeaveZone`、`zone.Forget` |
 
 ## 关键流程
 
@@ -43,7 +44,12 @@
 ```text
 p = devices.Ensure(info)
     失败 → send error{internal}, light{muted}; return      // 设备仍可进频道对讲
-p = applyDemo(p)                                           // 演示：绑定预置家长与声纹同意
+p = applyDemo(p)                                           // 演示：绑定预置家长与声纹同意（demo.manual_bind 时跳过）
+if p.Guardian == "":                                       // 未绑定：只播报绑定码
+    loop: binder.Issue → send bind.code + 呼吸灯；到期前 30s 换码；直到绑定或掉线
+    return
+serve(p):                                                   // 绑定后（或家长刚绑定时由 device.Bound 事件触发）
+active[d] = true
 if p.Stage == named:  p = devices.Handoff(p)               // 上次交棒未完成，重试，不让孩子重新起名
 if ai == nil: return
 ai.Open(session, persona(p))
@@ -51,6 +57,19 @@ if p.Stage == fresh:  ai.Say(欢迎并请孩子起名)
 ```
 
 `persona(p)` 把档案映射为 `linx.Persona`；`VoiceStep` 仅在「引导期且监护人同意」时非空。
+
+### 绑定与解绑（实现 `parentapi.Bindings`）
+
+```text
+Claim(g, code, voiceConsent)  = binder.Claim → device.Bound 事件 → send bind.state{bound} → serve(p)
+Unbind(g, d):
+    p.Guardian != g → ErrNotYourDevice（parentapi 回 404）
+    active[d] = false
+    relation.RemoveAll(d)         // 每条发 Removed，voice 立即中断与好友的转发
+    channel.Leave(全部频道)
+    device.Unbind(d, g)           // 删档案，级联好友、群成员、历史
+    在线 → send bind.state{unbound}，断开；设备重连后是新设备，重新播报绑定码
+```
 
 ### handoff（订阅 `device.Named`，每台设备一个 goroutine）
 
@@ -66,7 +85,9 @@ ai.Say(d, 「<孩子名>，我是<小伙伴名>」)
 
 | 事件 | 动作 |
 | --- | --- |
-| `relation.Proposed` | 双方 `friend.state{pending}` + `haptic double_tap` + `sound friend` |
+| `relation.Asked` | 双方 `friend.state{asking}` + `haptic double_tap` + `sound friend`；已就绪的设备由小伙伴问"要和 X 交朋友吗"（`sayFriendAsk`） |
+| `relation.Dropped` | 双方 `friend.state{removed}`（清掉询问提示） |
+| `relation.Proposed` | 双方 `friend.state{pending}`；小伙伴说"去告诉爸爸妈妈"（`sayFriendPending`） |
 | `relation.Confirmed` | 双方 `friend.state{confirmed}` + 同上提示；双方各记 `RecordMet` |
 | `relation.Removed` | 双方 `friend.state{removed}`；`voice.OnFriendRemoved` |
 | `channel.Joined` | 本机 `channel.state{joined}` + `sound`；对**同频道好友**（经 `FilterFriends`）互发 `presence{join}`，互记 `RecordMet`；`world` |

@@ -14,8 +14,15 @@ import (
 type Config struct {
 	Addr   string `yaml:"addr"`
 	DBPath string `yaml:"db_path"` // SQLite 文件
+	Auth   Auth   `yaml:"auth"`
 	Linx   Linx   `yaml:"linx"`
 	Demo   Demo   `yaml:"demo"`
+}
+
+// Auth 是设备认证配置，规则见 docs/trust.md §2。
+type Auth struct {
+	// Enrollment：open（首次上线登记公钥，默认）| manifest（只认出厂清单）| off（不认证，仅供固件过渡）。
+	Enrollment string `yaml:"enrollment"`
 }
 
 // Demo 是演示环境的预置：家长与同意标记在产品里由家长端绑定时取得。
@@ -25,6 +32,8 @@ type Demo struct {
 	VoiceConsent bool   `yaml:"voice_consent"` // 预置声纹登记的同意，默认开启；设为 false 则引导期不做声音登记
 	ParentToken  string `yaml:"parent_token"`  // 家长端令牌，代表 Guardian；空则不开放 /api
 	World        bool   `yaml:"world"`         // 开放 /world 演示地图；会暴露所有设备位置，默认关闭
+	// 设为 true 时不自动绑定 Guardian，新设备播报绑定码，由家长端输入完成绑定（演示绑定流程用）。
+	ManualBind bool `yaml:"manual_bind"`
 	// 好友默认贴近即生效、家长收到通知；设为 true 则每个新好友都要家长先确认。
 	FriendNeedsApproval bool `yaml:"friend_needs_approval"`
 }
@@ -43,7 +52,7 @@ func (l Linx) Enabled() bool { return l.WSURL != "" }
 // Load 读取并解析 path。文件不存在时返回默认配置，便于本地不接灵矽直接跑；
 // 其他错误（含未知字段）一律上抛，避免拼错的键被静默忽略。
 func Load(path string) (Config, error) {
-	cfg := Config{Addr: ":8080", DBPath: "palpable.db", Demo: Demo{VoiceConsent: true}}
+	cfg := Config{Addr: ":8080", DBPath: "palpable.db", Auth: Auth{Enrollment: "open"}, Demo: Demo{VoiceConsent: true}}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, nil

@@ -38,6 +38,13 @@ type Channels interface {
 type Relations interface {
 	Friends(ctx context.Context, d id.DeviceID) ([]relation.Friendship, error)
 	FilterFriends(ctx context.Context, viewer id.ParticipantID, ps []id.ParticipantID) []id.ParticipantID
+	Assent(ctx context.Context, d id.DeviceID) ([]id.DeviceID, error)
+	Decline(ctx context.Context, d id.DeviceID) []id.DeviceID
+}
+
+// Agents 让主人点名的小伙伴在频道里发言，由 app 实现（要先查两边家长的设置）。
+type Agents interface {
+	AgentSpeak(ctx context.Context, owner id.DeviceID) error
 }
 
 type Sharer interface {
@@ -50,6 +57,7 @@ type Services struct {
 	Channels  Channels
 	Relations Relations
 	Share     Sharer // 可为 nil
+	Agents    Agents // 可为 nil
 }
 
 func schema(props string, required ...string) json.RawMessage {
@@ -71,9 +79,12 @@ func fail(text string) (ToolResult, error) { return ToolResult{Text: text, IsErr
 
 // BusinessTools 返回服务端执行的业务工具。
 func BusinessTools(s Services) []Tool {
-	tools := baseTools(s)
+	tools := append(baseTools(s), friendTools(s)...)
 	if s.Share != nil {
 		tools = append(tools, shareTool(s.Share))
+	}
+	if s.Agents != nil {
+		tools = append(tools, speakTool(s.Agents))
 	}
 	return tools
 }
@@ -283,6 +294,66 @@ func baseTools(s Services) []Tool {
 				}
 				return ok("附近的好朋友有：" + strings.Join(names, "、") + "。")
 			},
+		},
+	}
+}
+
+// friendTools 是交朋友时孩子的回答：靠近后小伙伴问"要和 X 交朋友吗"，孩子回答后由 AI 调用。规则见 docs/trust.md §4。
+func friendTools(s Services) []Tool {
+	devicesOf := func(ds []id.DeviceID) []id.ParticipantID {
+		ps := make([]id.ParticipantID, 0, len(ds))
+		for _, d := range ds {
+			ps = append(ps, id.Device(d))
+		}
+		return ps
+	}
+	return []Tool{
+		{
+			Name:        "self.friends.accept",
+			Description: "刚才问过小朋友要不要和某位小伙伴交朋友，小朋友说「好」「要」时调用。只有两个小朋友都说好，并且爸爸妈妈同意后，才会成为好朋友。",
+			InputSchema: noArgs(),
+			Call: func(ctx context.Context, d id.DeviceID, _ json.RawMessage) (ToolResult, error) {
+				others, err := s.Relations.Assent(ctx, d)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				if len(others) == 0 {
+					return fail("现在没有在问交朋友的事哦。想交朋友，就和对方的玩偶贴一贴。")
+				}
+				return ok("记下啦！等" + strings.Join(friendNames(ctx, s, d, devicesOf(others)), "、") + "也说好，再告诉爸爸妈妈。")
+			},
+		},
+		{
+			Name:        "self.friends.decline",
+			Description: "刚才问过小朋友要不要和某位小伙伴交朋友，小朋友说「不要」「不想」时调用。不会告诉对方是谁拒绝的。",
+			InputSchema: noArgs(),
+			Call: func(ctx context.Context, d id.DeviceID, _ json.RawMessage) (ToolResult, error) {
+				if len(s.Relations.Decline(ctx, d)) == 0 {
+					return fail("现在没有在问交朋友的事哦。")
+				}
+				return ok("好的，那就先不交朋友。")
+			},
+		},
+	}
+}
+
+// speakTool 让小伙伴作为频道成员说一段话，规则见 docs/trust.md §5。
+func speakTool(ag Agents) Tool {
+	return Tool{
+		Name: "self.channel.speak",
+		Description: "小朋友请你对频道里的好朋友们说话时调用（比如「跟大家说……」「给大家讲个笑话」）。调用成功后，你接下来说的这一段话会被频道里的好朋友听到。" +
+			"开头先说「我是某某的小伙伴」；只说小朋友请你说的内容，不要说出小朋友的真实姓名、学校、地址、电话。",
+		InputSchema: noArgs(),
+		Call: func(ctx context.Context, d id.DeviceID, _ json.RawMessage) (ToolResult, error) {
+			switch err := ag.AgentSpeak(ctx, d); {
+			case errors.Is(err, channel.ErrNotInChannel):
+				return fail("现在不在频道里哦，先加入公园频道或群聊吧。")
+			case errors.Is(err, device.ErrAgentOff):
+				return fail("爸爸妈妈还没有打开「小伙伴可以在频道里说话」，这次就悄悄告诉你吧。")
+			case err != nil:
+				return ToolResult{}, err
+			}
+			return ok("好的，接下来这段话频道里的好朋友都能听到。")
 		},
 	}
 }

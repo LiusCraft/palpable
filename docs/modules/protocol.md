@@ -59,4 +59,3 @@ DecodeUpstream(data):
 
 | 方向 | 消息 | 变更 | 用途 |
 | --- | --- | --- | --- |
-| 下行 | `speaker.state` | 可选 `from_kind`（device \| agent） | 预留：智能体入频道时才加 |

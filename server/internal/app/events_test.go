@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,8 +11,10 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/LiusCraft/palpable/server/internal/channel"
+	"github.com/LiusCraft/palpable/server/internal/config"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/relation"
+	"github.com/LiusCraft/palpable/server/internal/store"
 )
 
 // 领域事件经 Start 订阅后翻译成下行消息：好友确认 / 解除、频道离开 / 切换。
@@ -84,5 +87,43 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("timeout")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// 端到端（演示默认"孩子自己交友"）：贴近 → 两个小伙伴问 → 两个孩子都说好 → 成为好友。
+func TestFriendshipNeedsBothKids(t *testing.T) {
+	ctx := context.Background()
+	a, err := newApp(ctx, deps{store: store.NewMemory(), demo: config.Demo{Guardian: "g1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.catalog.EnsureAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a.Handler())
+	defer srv.Close()
+	const other id.DeviceID = "02:00:00:00:00:02"
+	connect(t, srv, mac)
+	connect(t, srv, other)
+	waitFor(t, func() bool { return a.devices.AutoApproveFriends(ctx, mac) && a.devices.AutoApproveFriends(ctx, other) })
+
+	for start := time.Now(); time.Since(start) < 1800*time.Millisecond; time.Sleep(300 * time.Millisecond) {
+		_ = a.rel.OnProximity(ctx, mac, []relation.Peer{{Device: other, Strength: 0.9}})
+		_ = a.rel.OnProximity(ctx, other, []relation.Peer{{Device: mac, Strength: 0.9}})
+	}
+	if e := <-a.rel.Subscribe(); e.Kind != relation.Asked {
+		t.Fatalf("want Asked, got %+v", e)
+	}
+	if r, err := a.mcp.Call(ctx, mac, "self.friends.accept", json.RawMessage(`{}`)); err != nil || r.IsError {
+		t.Fatalf("accept: %+v %v", r, err)
+	}
+	if ok, _ := a.rel.AreFriends(ctx, id.Device(mac), id.Device(other)); ok {
+		t.Fatal("one kid saying yes is not enough")
+	}
+	if _, err := a.mcp.Call(ctx, other, "self.friends.accept", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := a.rel.AreFriends(ctx, id.Device(mac), id.Device(other)); !ok {
+		t.Fatal("both kids said yes and both families allow it: should be friends")
 	}
 }

@@ -6,6 +6,7 @@ import { copy } from '../ui/copy'
 import { playCue } from '../ui/sounds'
 import { audioSupported, FrameEncoder, Player } from './audio'
 import { lookAround } from './environment'
+import { publicKeyB64, signChallenge } from './keys'
 import { handleMcp, type JsonRpc } from './mcp'
 import { PREROLL_FRAMES, Vad } from './vad'
 
@@ -14,7 +15,8 @@ export type Link = 'offline' | 'connecting' | 'online'
 export interface Friend {
   deviceId: string
   name: string
-  status: 'pending' | 'confirmed'
+  /** asking：小伙伴正在问孩子要不要交朋友；pending：在等家长同意。 */
+  status: 'asking' | 'pending' | 'confirmed'
 }
 
 export interface DeviceView {
@@ -26,7 +28,8 @@ export interface DeviceView {
   /** 设备工具 self.light.set 临时指定的灯色；为空时按 light 与频道色。 */
   lightOverride: { color: string; pattern: string } | null
   speaking: boolean
-  source: 'ai' | 'peer' | null
+  /** agent：别人的小伙伴在频道里发言，和好友说话一样展示。 */
+  source: 'ai' | 'peer' | 'agent' | null
   peer: { from: string; name: string } | null
   micEnabled: boolean
   talking: boolean // VAD 判定正在说话（或按住说话）
@@ -36,6 +39,8 @@ export interface DeviceView {
   toast: { text: string; at: number } | null
   shakeAt: number
   lastError: string | null
+  /** 还没绑定家长时服务端下发的绑定码；真实设备逐位播报，这里同时显示在画面上。 */
+  bindCode: string | null
 }
 
 const CAPABILITIES: Capability[] = ['mic', 'speaker', 'light', 'haptic', 'proximity', 'location', 'wake', 'mcp']
@@ -71,6 +76,7 @@ export class VirtualDevice {
       toast: null,
       shakeAt: 0,
       lastError: null,
+      bindCode: null,
     }))
   }
 
@@ -99,11 +105,16 @@ export class VirtualDevice {
       type: 'hello',
       device_id: mac,
       skin,
-      firmware: 'web-sim-0.2',
+      firmware: 'web-sim-0.3',
       audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 },
       capabilities: CAPABILITIES,
     }
-    ws.onopen = () => ws.send(JSON.stringify(hello))
+    ws.onopen = () => {
+      // 每次都带公钥：服务端首次见到时登记，之后只核对是否一致。
+      void publicKeyB64(mac)
+        .then((pubkey) => ws.send(JSON.stringify({ ...hello, pubkey })))
+        .catch(() => ws.send(JSON.stringify(hello)))
+    }
     ws.onmessage = (ev) => {
       if (typeof ev.data !== 'string') {
         this.player.push(ev.data as ArrayBuffer)
@@ -144,8 +155,19 @@ export class VirtualDevice {
 
   private onMessage(msg: PalpableMessage): void {
     switch (msg.type) {
+      case 'hello.challenge':
+        void signChallenge(this.mac, msg.nonce).then((signature) => this.send({ type: 'hello.proof', signature }))
+        break
       case 'hello.ack':
         this.set({ link: 'online', sessionId: msg.session_id })
+        break
+      case 'bind.code':
+        this.set({ bindCode: msg.code })
+        announce(copy.bind.announce(msg.code))
+        break
+      case 'bind.state':
+        this.set({ bindCode: null })
+        this.toast(msg.event === 'bound' ? copy.bind.bound : copy.bind.unbound)
         break
       case 'audio.downlink':
         this.player.configure(msg.sample_rate)
@@ -158,15 +180,18 @@ export class VirtualDevice {
         if (msg.state === 'start') {
           // 同一时刻只有一种来源：换来源时清掉排队的旧音频。
           if (this.store.getState().source !== src) this.player.flush()
+          const fromChannel = src !== 'ai'
+          if (src === 'agent') playCue('friend') // 先提示一声：接下来说话的是 AI 小伙伴，不是小朋友
           this.set({
             speaking: true,
             source: src,
-            peer: src === 'peer' ? { from: msg.from ?? '', name: msg.name ?? copy.friend.someone } : null,
-            light: src === 'peer' ? 'peer_talking' : this.store.getState().light,
+            peer: fromChannel ? { from: msg.from ?? '', name: msg.name ?? copy.friend.someone } : null,
+            light: fromChannel ? 'peer_talking' : this.store.getState().light,
           })
         } else if (this.store.getState().source === src) {
-          if (src === 'peer') this.player.flush()
-          this.set({ speaking: false, source: null, peer: null, light: src === 'peer' ? 'idle' : this.store.getState().light })
+          const fromChannel = src !== 'ai'
+          if (fromChannel) this.player.flush()
+          this.set({ speaking: false, source: null, peer: null, light: fromChannel ? 'idle' : this.store.getState().light })
         }
         break
       }
@@ -202,7 +227,13 @@ export class VirtualDevice {
           delete friends[msg.device_id]
         } else {
           friends[msg.device_id] = { deviceId: msg.device_id, name, status: msg.event }
-          this.toast(msg.event === 'pending' ? copy.park.friendPending(name) : copy.park.friendMade(name))
+          this.toast(
+            msg.event === 'asking'
+              ? copy.park.friendAsking(name)
+              : msg.event === 'pending'
+                ? copy.park.friendPending(name)
+                : copy.park.friendMade(name),
+          )
         }
         this.set({ friends })
         break
@@ -311,5 +342,16 @@ export class VirtualDevice {
   reportProximity(peers: { deviceId: string; strength: number }[]): void {
     const list = peers.slice(0, 16).map((p) => ({ device_id: p.deviceId, strength: Math.round(p.strength * 100) / 100 }))
     this.send({ type: 'proximity', peers: list as Proximity['peers'] })
+  }
+}
+
+/** 播报绑定码：真实设备用本地数字提示音，模拟器用浏览器朗读；不经过 AI（绑定前没有监护人同意）。 */
+function announce(text: string): void {
+  try {
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'zh-CN'
+    speechSynthesis.speak(u)
+  } catch {
+    // 浏览器不支持朗读时只显示在画面上
   }
 }
