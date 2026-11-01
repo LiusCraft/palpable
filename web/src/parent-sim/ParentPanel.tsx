@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { copy } from '../ui/copy'
 import { Button, Chip } from '../ui/components'
-import { parentApi, type Digest, type Friend, type Group, type Kid } from './api'
+import { parentApi, type Digest, type Friend, type FriendPolicy, type Group, type Kid } from './api'
 
 // 家长端（Web 模拟）：好友与群聊、今日回顾、家长控制。对应效果图第 7 格。
 // 只调 /api，所有规则（归属、确认、解除）都在服务端。
@@ -18,6 +18,7 @@ export function ParentPanel() {
   const [friends, setFriends] = useState<Friend[]>([])
   const [groups, setGroups] = useState<Group[]>([])
   const [digest, setDigest] = useState<Digest | null>(null)
+  const [policy, setPolicy] = useState<FriendPolicy>('approve')
   const [tab, setTab] = useState<Tab>('friends')
   const [error, setError] = useState('')
   const [now, setNow] = useState(0) // 随轮询更新，渲染时不直接取时间
@@ -31,7 +32,8 @@ export function ParentPanel() {
       setKids(ks)
       const id = kid || ks.find((k) => k.online)?.id || ks[0]?.id
       if (!id) return
-      const [f, g, d] = await Promise.all([parentApi.friends(id), parentApi.groups(id), parentApi.digest(id)])
+      const [f, g, d, st] = await Promise.all([parentApi.friends(id), parentApi.groups(id), parentApi.digest(id), parentApi.settings(id)])
+      setPolicy(st.friend_policy)
       setFriends(f)
       setGroups(g)
       setDigest(d)
@@ -105,9 +107,10 @@ export function ParentPanel() {
         {pending.map((f) => (
           <div key={f.request_id} className="mb-2 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm">
             <span className="flex-1">
-              🤝 {f.name || copy.friend.someone} <span className="text-xs text-amber-600">{copy.parent.pending}</span>
+              🤝 {f.name || copy.friend.someone}{' '}
+              <span className="text-xs text-amber-600">{f.waiting_for === 'other' ? copy.parent.pendingOther : copy.parent.pending}</span>
             </span>
-            <Button onClick={() => void act(() => parentApi.confirm(f.request_id))}>{copy.parent.confirm}</Button>
+            {f.waiting_for !== 'other' && <Button onClick={() => void act(() => parentApi.confirm(f.request_id))}>{copy.parent.confirm}</Button>}
           </div>
         ))}
         <ul className="space-y-2 text-sm">
@@ -169,6 +172,22 @@ export function ParentPanel() {
         <h3 className="mb-3 font-semibold text-[#1d3557]">{copy.parent.tabs.control}</h3>
         {tab === 'control' ? (
           <ul className="space-y-2 text-sm">
+            {current && (
+              <li className="space-y-1 pb-2">
+                <div className="text-xs font-medium text-slate-500">{copy.parent.policyTitle}</div>
+                {(['approve', 'notify'] as FriendPolicy[]).map((p) => (
+                  <label key={p} className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="radio"
+                      name="friend-policy"
+                      checked={policy === p}
+                      onChange={() => void act(() => parentApi.setFriendPolicy(current, p))}
+                    />
+                    {copy.parent.policy[p]}
+                  </label>
+                ))}
+              </li>
+            )}
             {confirmed.map((f) => (
               <li key={f.device_id} className="flex items-center justify-between">
                 <span>{f.name || copy.friend.someone}</span>

@@ -41,6 +41,7 @@ type Device struct {
 	Guardian     id.GuardianID
 	VoiceConsent bool
 	SpeakerID    string
+	FriendPolicy int // 含义由 device 定义
 	CreatedAt    time.Time
 }
 
@@ -88,20 +89,29 @@ type GuardianRepo interface {
 	Put(ctx context.Context, g Guardian) error // 存在则覆盖
 }
 
-// Friendship 的 A、B 由仓储规范为 A < B，同一对设备只有一条记录。
+// Friendship 的 A、B 由仓储规范为 A < B，同一对设备只有一条记录；交换 A、B 时 ApprovedA、ApprovedB 随之交换。
 type Friendship struct {
-	ID          string
-	A, B        id.DeviceID
-	Status      int
-	ConfirmedBy id.GuardianID
-	CreatedAt   time.Time
+	ID                   string
+	A, B                 id.DeviceID
+	Status               int
+	ConfirmedBy          id.GuardianID
+	ApprovedA, ApprovedB id.GuardianID // 每一侧由谁放行；空表示还没放行
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+func (f *Friendship) normalize() {
+	if f.A > f.B {
+		f.A, f.B = f.B, f.A
+		f.ApprovedA, f.ApprovedB = f.ApprovedB, f.ApprovedA
+	}
 }
 
 type FriendshipRepo interface {
 	Get(ctx context.Context, friendshipID string) (Friendship, error)
 	ByPair(ctx context.Context, a, b id.DeviceID) (Friendship, error) // 参数顺序无关
 	Create(ctx context.Context, f Friendship) error                   // ID 或这一对已存在返回 ErrConflict
-	Update(ctx context.Context, f Friendship) error                   // 只改 Status 与 ConfirmedBy
+	Update(ctx context.Context, f Friendship) error                   // 只改 Status、ConfirmedBy、Approved*、UpdatedAt
 	ListByDevice(ctx context.Context, d id.DeviceID) ([]Friendship, error)
 	ListByStatus(ctx context.Context, status int) ([]Friendship, error) // 启动时装载好友缓存
 }

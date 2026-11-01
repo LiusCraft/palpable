@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/store"
@@ -20,8 +21,7 @@ func TestRequestFriendsAndRemoveEdges(t *testing.T) {
 		t.Fatalf("Remove unknown pair: %v", err)
 	}
 
-	bothNear(t, r, clk, 5, 0.9)
-	req := nextEvent(t, r).Friendship
+	req := pendingRequest(t, r, clk)
 	got, err := r.Request(ctx, req.ID)
 	if err != nil || got.ID != req.ID || got.Other(a) != b || got.Other(b) != a {
 		t.Fatalf("Request = %+v %v", got, err)
@@ -31,7 +31,7 @@ func TestRequestFriendsAndRemoveEdges(t *testing.T) {
 		t.Fatalf("Friends with pending = %+v %v", fs, err)
 	}
 
-	// 拒绝待确认请求：Remove 也适用，且再次 Remove 不重复发事件。
+	// 拒绝等家长的请求：Remove 也适用，且再次 Remove 不重复发事件。
 	if err := r.Remove(ctx, a, b); err != nil {
 		t.Fatal(err)
 	}
@@ -91,14 +91,23 @@ func TestStoreErrorsPropagate(t *testing.T) {
 	if _, err := r.Request(ctx, "x"); !errors.Is(err, errBoom) {
 		t.Fatalf("Request: %v", err)
 	}
-	if err := r.Confirm(ctx, "x", "g"); !errors.Is(err, errBoom) {
+	if err := r.Confirm(ctx, "x", a, "g"); !errors.Is(err, errBoom) {
 		t.Fatalf("Confirm: %v", err)
 	}
 	if err := r.Remove(ctx, a, b); !errors.Is(err, errBoom) {
 		t.Fatalf("Remove: %v", err)
 	}
-	if err := r.propose(ctx, a, b); !errors.Is(err, errBoom) {
-		t.Fatalf("propose: %v", err)
+	if err := r.ask(ctx, a, b); !errors.Is(err, errBoom) {
+		t.Fatalf("ask: %v", err)
+	}
+	if err := r.promote(ctx, makePair(a, b), time.Now()); !errors.Is(err, errBoom) {
+		t.Fatalf("promote: %v", err)
+	}
+	if err := r.Sweep(ctx); !errors.Is(err, errBoom) {
+		t.Fatalf("sweep: %v", err)
+	}
+	if err := r.RemoveAll(ctx, a); !errors.Is(err, errBoom) {
+		t.Fatalf("remove all: %v", err)
 	}
 }
 
@@ -108,9 +117,9 @@ func TestRemoveAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.SetAutoConfirm(true)
+	r.SetAutoApprove(func(context.Context, id.DeviceID) bool { return true })
 	for _, p := range []id.DeviceID{"b", "c"} {
-		if err := r.propose(ctx, "a", p); err != nil {
+		if err := r.promote(ctx, makePair("a", p), time.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}

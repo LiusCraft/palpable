@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,21 +145,33 @@ func TestFriendsConfirmRemoveGroupsDigest(t *testing.T) {
 	code, body := g.do(t, "GET", "/api/kids/"+string(kidA)+"/friends", token)
 	var fs []Friend
 	_ = json.Unmarshal(body, &fs)
-	if code != 200 || len(fs) != 1 || fs[0].DeviceID != kidB || fs[0].Status != "pending" || fs[0].Name != "兔兔" || !fs[0].Online {
+	if code != 200 || len(fs) != 1 || fs[0].DeviceID != kidB || fs[0].Status != "pending" || fs[0].Name != "兔兔" || !fs[0].Online || fs[0].WaitingFor != "you" {
 		t.Fatalf("friends = %d %s", code, body)
 	}
 
+	// g1 只能放行自家孩子 A 这一侧；还要等 B 的家长。
 	if code, _ := g.do(t, "POST", "/api/friend-requests/"+fs[0].RequestID+"/confirm", token); code != http.StatusNoContent {
 		t.Fatalf("confirm = %d", code)
 	}
+	if ok, _ := g.rel.AreFriends(ctx, id.Device(kidA), id.Device(kidB)); ok {
+		t.Fatal("one guardian must not be enough")
+	}
+	_, body = g.do(t, "GET", "/api/kids/"+string(kidA)+"/friends", token)
+	_ = json.Unmarshal(body, &fs)
+	if fs[0].WaitingFor != "other" {
+		t.Fatalf("waiting_for = %s", body)
+	}
+	if err := g.rel.Confirm(ctx, fs[0].RequestID, kidB, "g2"); err != nil {
+		t.Fatal(err)
+	}
 	if ok, _ := g.rel.AreFriends(ctx, id.Device(kidA), id.Device(kidB)); !ok {
-		t.Fatal("not friends after confirm")
+		t.Fatal("not friends after both guardians approved")
 	}
 	if code, _ := g.do(t, "POST", "/api/friend-requests/"+fs[0].RequestID+"/confirm", token); code != http.StatusConflict {
 		t.Fatalf("second confirm = %d", code)
 	}
 	f, _ := g.s.Friendships().Get(ctx, fs[0].RequestID)
-	if f.ConfirmedBy != "g1" {
+	if f.ConfirmedBy != "g2" || f.ApprovedA != "g1" {
 		t.Fatalf("confirmed_by = %q", f.ConfirmedBy)
 	}
 
@@ -184,5 +197,41 @@ func TestFriendsConfirmRemoveGroupsDigest(t *testing.T) {
 	}
 	if code, _ := g.do(t, "GET", "/api/kids/"+string(kidA)+"/digest?date=2020-01-01", token); code != http.StatusBadRequest {
 		t.Fatalf("other date = %d", code)
+	}
+}
+
+func (g *rig) put(t *testing.T, path, body string) int {
+	t.Helper()
+	req, _ := http.NewRequest("PUT", g.srv.URL+path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestFriendPolicySettings(t *testing.T) {
+	g := setup(t)
+	path := "/api/kids/" + string(kidA) + "/settings"
+	_, body := g.do(t, "GET", path, token)
+	if !strings.Contains(string(body), `"approve"`) {
+		t.Fatalf("default settings = %s", body)
+	}
+	for _, bad := range []string{`{"friend_policy":"yolo"}`, `{`, `{"friend_policy":"notify","x":1}`} {
+		if code := g.put(t, path, bad); code != http.StatusBadRequest {
+			t.Fatalf("%s = %d", bad, code)
+		}
+	}
+	if code := g.put(t, path, `{"friend_policy":"notify"}`); code != http.StatusNoContent {
+		t.Fatalf("put = %d", code)
+	}
+	_, body = g.do(t, "GET", path, token)
+	if !strings.Contains(string(body), `"notify"`) {
+		t.Fatalf("settings = %s", body)
+	}
+	if code := g.put(t, "/api/kids/"+string(kidB)+"/settings", `{"friend_policy":"notify"}`); code != http.StatusNotFound {
+		t.Fatalf("other family's kid = %d", code)
 	}
 }

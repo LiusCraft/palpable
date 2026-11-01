@@ -47,6 +47,14 @@ type Style struct {
 	AgentID      string // EnsureAll 填充
 }
 
+// FriendPolicy 是家长为自家孩子选的交友方式，见 docs/trust.md §4。数值存进库里。
+type FriendPolicy int
+
+const (
+	FriendApprove FriendPolicy = iota // 需我批准（默认）
+	FriendNotify                      // 孩子自己交友、事后通知我
+)
+
 type Stage int
 
 const (
@@ -65,6 +73,7 @@ type Profile struct {
 	Guardian     id.GuardianID
 	VoiceConsent bool
 	SpeakerID    string
+	FriendPolicy FriendPolicy
 	Stage        Stage
 	CreatedAt    time.Time
 }
@@ -368,6 +377,20 @@ func (d *Devices) Bind(ctx context.Context, dev id.DeviceID, g id.GuardianID) er
 	return d.update(ctx, dev, func(p *Profile) { p.Guardian = g })
 }
 
+// SetFriendPolicy 由家长设置自家孩子的交友方式。
+func (d *Devices) SetFriendPolicy(ctx context.Context, dev id.DeviceID, p FriendPolicy) error {
+	if p != FriendApprove && p != FriendNotify {
+		return fmt.Errorf("device: unknown friend policy %d", p)
+	}
+	return d.update(ctx, dev, func(pr *Profile) { pr.FriendPolicy = p })
+}
+
+// AutoApproveFriends 供 relation 判断这一侧是否自动放行；查不到档案时按最严处理。
+func (d *Devices) AutoApproveFriends(ctx context.Context, dev id.DeviceID) bool {
+	p, err := d.Profile(ctx, dev)
+	return err == nil && p.FriendPolicy == FriendNotify
+}
+
 // SetVoiceConsent 记录监护人对声纹登记的单独同意。
 func (d *Devices) SetVoiceConsent(ctx context.Context, dev id.DeviceID, on bool) error {
 	return d.update(ctx, dev, func(p *Profile) { p.VoiceConsent = on })
@@ -437,10 +460,12 @@ func (d *Devices) Delete(ctx context.Context, dev id.DeviceID) error {
 
 func fromRecord(r store.Device) Profile {
 	return Profile{ID: r.ID, Skin: r.Skin, StyleID: r.StyleID, AgentID: r.AgentID, DollName: r.DollName, KidName: r.KidName,
-		Guardian: r.Guardian, VoiceConsent: r.VoiceConsent, SpeakerID: r.SpeakerID, Stage: Stage(r.Stage), CreatedAt: r.CreatedAt}
+		Guardian: r.Guardian, VoiceConsent: r.VoiceConsent, SpeakerID: r.SpeakerID, FriendPolicy: FriendPolicy(r.FriendPolicy),
+		Stage: Stage(r.Stage), CreatedAt: r.CreatedAt}
 }
 
 func toRecord(p Profile) store.Device {
 	return store.Device{ID: p.ID, Skin: p.Skin, StyleID: p.StyleID, AgentID: p.AgentID, DollName: p.DollName, KidName: p.KidName,
-		Stage: int(p.Stage), Guardian: p.Guardian, VoiceConsent: p.VoiceConsent, SpeakerID: p.SpeakerID, CreatedAt: p.CreatedAt}
+		Stage: int(p.Stage), Guardian: p.Guardian, VoiceConsent: p.VoiceConsent, SpeakerID: p.SpeakerID,
+		FriendPolicy: int(p.FriendPolicy), CreatedAt: p.CreatedAt}
 }

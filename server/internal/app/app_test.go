@@ -141,12 +141,15 @@ func TestRelationEventsReachBothDevices(t *testing.T) {
 	const other id.DeviceID = "02:00:00:00:00:02"
 	wsA, wsB := connect(t, srv, mac), connect(t, srv, other)
 
-	a.onRelation(context.Background(), relation.Event{Kind: relation.Proposed, Friendship: relation.Friendship{ID: "f1", A: mac, B: other}})
-	for _, c := range []struct {
+	f := relation.Friendship{ID: "f1", A: mac, B: other}
+	conns := []struct {
 		ws   *websocket.Conn
 		peer id.DeviceID
-	}{{wsA, other}, {wsB, mac}} {
-		if got := readText(t, c.ws); !strings.Contains(got, `"type":"friend.state"`) || !strings.Contains(got, `"event":"pending"`) || !strings.Contains(got, string(c.peer)) {
+	}{{wsA, other}, {wsB, mac}}
+	// 靠近：先问孩子，带振动和提示音。
+	a.onRelation(context.Background(), relation.Event{Kind: relation.Asked, Friendship: f})
+	for _, c := range conns {
+		if got := readText(t, c.ws); !strings.Contains(got, `"type":"friend.state"`) || !strings.Contains(got, `"event":"asking"`) || !strings.Contains(got, string(c.peer)) {
 			t.Fatalf("friend.state = %s", got)
 		}
 		if got := readText(t, c.ws); !strings.Contains(got, `"type":"haptic"`) {
@@ -154,6 +157,15 @@ func TestRelationEventsReachBothDevices(t *testing.T) {
 		}
 		if got := readText(t, c.ws); !strings.Contains(got, `"name":"friend"`) {
 			t.Fatalf("sound = %s", got)
+		}
+	}
+	// 两个孩子都说好：等家长；询问作罢：清掉提示。
+	for kind, want := range map[relation.EventKind]string{relation.Proposed: "pending", relation.Dropped: "removed"} {
+		a.onRelation(context.Background(), relation.Event{Kind: kind, Friendship: f})
+		for _, c := range conns {
+			if got := readText(t, c.ws); !strings.Contains(got, `"event":"`+want+`"`) {
+				t.Fatalf("%v: friend.state = %s", kind, got)
+			}
 		}
 	}
 }

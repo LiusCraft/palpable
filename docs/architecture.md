@@ -153,9 +153,12 @@
 
 ### 5.4 贴近成为好友
 
+规则见 [trust.md §4](trust.md#4-交朋友)，状态机见 [relation](modules/relation.md#状态机)。
+
 1. 两台设备各自上报 `proximity`；`app` 交给 `relation.OnProximity`。
-2. 双方都持续靠近 1.5 秒 → `relation` 生成待确认请求，发出 `Proposed` 事件；`app` 下发 `friend.state{pending}` 与振动。
-3. 家长确认（演示中可由孩子确认）→ `Confirmed` 事件 → `friend.state{confirmed}`；此后 `voice` 计算听者时对方会被纳入。
+2. 双方都持续靠近 1.5 秒 → `Asked` 事件；`app` 下发 `friend.state{asking}` 与振动，两边的小伙伴各问一句"要和 X 交朋友吗"。
+3. 两个孩子 60 秒内都说"好"（AI 调 `self.friends.accept` → `relation.Assent`）。有人说"不要"或超时 → `Dropped`，不打扰家长。
+4. 每一侧按自家家长的交友方式：自动放行，或等这一侧家长在家长端批准。两侧都放行 → `Confirmed` → `friend.state{confirmed}`；此后 `voice` 计算听者时对方会被纳入。
 
 ### 5.5 进入公园
 
@@ -210,7 +213,8 @@ Web 模拟器与固件各自实现下面七项，其余全在服务端。
 | --- | --- | --- |
 | 非好友的音频不转发 | `voice` 计算听者时与 `relation.AreFriends` 求交 | S5 语音验收第 2 条 |
 | 非好友不出现在在线列表 | `app` 下发 `presence`、`channel.state` 成员前经 `relation.FilterFriends` 过滤 | S4 验收 |
-| 好友需确认才生效 | `relation` 状态机保留 `Pending`；只有 `Confirm` 能转为好友 | S3 验收 |
+| 好友要两个孩子同意、两家监护人放行 | `relation` 状态机：asking → pending → confirmed；每侧放行只能由该侧监护人（`parentapi` 校验归属）或该侧家长的自动设置给出 | S15 验收 |
+| 未绑定设备不提供服务 | `app.serving` 为假时丢弃全部上行；`gateway` 先验签再登记会话 | S13、S14 验收 |
 | 家长只看自家孩子 | `parentapi` 每个接口校验孩子归属 | S10 验收 |
 | 灵矽令牌不出服务端 | 只由 `linxapi`、`bridge/linx` 从 YAML 配置文件（`internal/config`）读取 | 代码审查：`web/` 中无令牌 |
 | 演示地图不泄露位置 | `/world` 只在演示模式注册 | 默认启动时访问 `/world` 返回 404 |
@@ -242,7 +246,6 @@ Web 模拟器与固件各自实现下面七项，其余全在服务端。
 
 | 问题 | 影响 | 当前假设 |
 | --- | --- | --- |
-| 好友由一方家长确认，还是双方家长都确认？ | `relation` 状态机、家长端 | 演示：任一方确认即生效 |
 | 家长端是否进入演示？AGENTS.md 主线不含，产品文档曾列入 | 任务排期 | 主线之外的加演项，排在 M4 |
 | 灵矽聊天记录能否按设备筛选？风格智能体被多台设备共用 | `history` 会不会混入别的孩子的对话 | 消息接口带 `macAddress`：只展示标着本机 MAC 的消息，没有 MAC 的不展示 |
 | 引导期的声音样本从哪里来？灵矽的声纹登记只收 `audio_url`，引导智能体被所有新设备共用，聊天记录又不能确认能按设备筛选 | 声音登记能否做 | 联调验证；筛不出就不做声音登记，不改为服务端暂存音频 |

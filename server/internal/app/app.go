@@ -118,7 +118,6 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	rel.SetAutoConfirm(!d.demo.FriendNeedsApproval)
 	chans, err := channel.New(ctx, d.store.Groups())
 	if err != nil {
 		return nil, err
@@ -130,6 +129,7 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	a := &App{demo: d.demo, store: d.store, catalog: catalog, devices: device.New(d.store.Devices(), catalog, d.linx),
 		ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park), requireBind: d.requireBind}
 	a.binder = device.NewBinder(a.devices)
+	rel.SetAutoApprove(a.devices.AutoApproveFriends)
 	var aiPort voice.AI = noAI{}
 	if d.ai != nil {
 		aiPort = d.ai
@@ -188,6 +188,7 @@ func (a *App) Start(ctx context.Context) {
 	go a.deviceEvents(ctx)
 	go a.bindEvents(ctx)
 	go a.sweepGroups(ctx)
+	go a.sweepFriends(ctx)
 }
 
 func (a *App) Close() error { return a.store.Close() }
@@ -303,6 +304,12 @@ func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
 		return p
 	}
 	p.Guardian = g
+	// 演示默认"孩子自己交友、事后通知"，贴一贴两个孩子都说好就成为好友；产品默认需家长批准。
+	if !a.demo.FriendNeedsApproval {
+		if err := a.devices.SetFriendPolicy(ctx, p.ID, device.FriendNotify); err == nil {
+			p.FriendPolicy = device.FriendNotify
+		}
+	}
 	if a.demo.VoiceConsent {
 		if err := a.devices.SetVoiceConsent(ctx, p.ID, true); err == nil {
 			p.VoiceConsent = true
@@ -445,16 +452,27 @@ func (a *App) relationEvents(ctx context.Context) {
 func (a *App) onRelation(ctx context.Context, e relation.Event) {
 	f := e.Friendship
 	a.publish(world.Event{Kind: "friend", Device: f.A, Friend: &f.B, Status: map[relation.EventKind]string{
-		relation.Proposed: "pending", relation.Confirmed: "confirmed", relation.Removed: "removed"}[e.Kind]})
+		relation.Asked: "asking", relation.Proposed: "pending", relation.Confirmed: "confirmed",
+		relation.Removed: "removed", relation.Dropped: "removed"}[e.Kind]})
 	for _, d := range []id.DeviceID{f.A, f.B} {
 		other := f.Other(d)
-		state := &protocol.FriendState{Type: protocol.TypeFriendState, DeviceID: other, Name: a.dollName(ctx, other)}
+		name := a.dollName(ctx, other)
+		state := &protocol.FriendState{Type: protocol.TypeFriendState, DeviceID: other, Name: name}
 		switch e.Kind {
-		case relation.Proposed:
-			state.Event = "pending"
+		case relation.Asked:
+			// 先问孩子：小伙伴开口问，孩子说好后 AI 调 self.friends.accept。
+			state.Event = "asking"
 			a.send(d, state,
 				&protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "double_tap"},
 				&protocol.Sound{Type: protocol.TypeSound, Name: "friend"})
+			a.say(ctx, d, fmt.Sprintf(sayFriendAsk, friendLabel(name)))
+		case relation.Dropped:
+			state.Event = "removed"
+			a.send(d, state)
+		case relation.Proposed:
+			state.Event = "pending"
+			a.send(d, state)
+			a.say(ctx, d, fmt.Sprintf(sayFriendPending, friendLabel(name)))
 		case relation.Confirmed:
 			state.Event = "confirmed"
 			// 贴一贴自动成为好友时这是孩子唯一的反馈，所以和"请求"一样要有提示音。
@@ -469,6 +487,43 @@ func (a *App) onRelation(ctx context.Context, e relation.Event) {
 	}
 	if e.Kind == relation.Removed {
 		a.voice.OnFriendRemoved(f.A, f.B)
+	}
+}
+
+// say 让已就绪设备的小伙伴说一句话，不阻塞事件循环；引导期间与没有 AI 时不说。
+func (a *App) say(ctx context.Context, d id.DeviceID, text string) {
+	if a.ai == nil || !a.ready(ctx, d) {
+		return
+	}
+	go func() {
+		sayCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := a.ai.Say(sayCtx, d, text); err != nil {
+			slog.Warn("say", "device_id", d, "error", err)
+		}
+	}()
+}
+
+func friendLabel(name string) string {
+	if name == "" {
+		return "这位小伙伴"
+	}
+	return name
+}
+
+// sweepFriends 让没回答的交友询问及时作罢（询问只有 60 秒），并让过期的家长请求失效。
+func (a *App) sweepFriends(ctx context.Context) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := a.rel.Sweep(ctx); err != nil {
+				slog.Warn("sweep friend requests", "error", err)
+			}
+		}
 	}
 }
 

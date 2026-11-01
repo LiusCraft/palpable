@@ -214,8 +214,8 @@ func (r memFriendships) Create(_ context.Context, f Friendship) error {
 	if f.A == f.B {
 		return fmt.Errorf("create friendship %s: %w", f.ID, errSelfFriendship)
 	}
-	f.A, f.B = orderPair(f.A, f.B)
-	f.CreatedAt = roundMillis(f.CreatedAt)
+	f.normalize()
+	f.CreatedAt, f.UpdatedAt = roundMillis(f.CreatedAt), roundMillis(f.UpdatedAt)
 	r.m.mu.Lock()
 	defer r.m.mu.Unlock()
 	for _, old := range r.m.friendships {
@@ -234,7 +234,11 @@ func (r memFriendships) Update(_ context.Context, f Friendship) error {
 	if !ok {
 		return fmt.Errorf("update friendship %s: %w", f.ID, ErrNotFound)
 	}
-	old.Status, old.ConfirmedBy = f.Status, f.ConfirmedBy
+	old.Status, old.ConfirmedBy, old.UpdatedAt = f.Status, f.ConfirmedBy, roundMillis(f.UpdatedAt)
+	old.ApprovedA, old.ApprovedB = f.ApprovedA, f.ApprovedB
+	if f.A != old.A {
+		old.ApprovedA, old.ApprovedB = f.ApprovedB, f.ApprovedA
+	}
 	r.m.friendships[f.ID] = old
 	return nil
 }

@@ -17,6 +17,8 @@ export interface Friend {
   device_id: string
   name: string
   status: 'pending' | 'confirmed'
+  /** pending 时：you 等你同意；other 你已同意（或自动放行），在等对方家长 */
+  waiting_for?: 'you' | 'other'
   auto: boolean
   online: boolean
   since: string
@@ -31,6 +33,8 @@ export interface Group {
   foreground: boolean
   members: number
 }
+
+export type FriendPolicy = 'approve' | 'notify'
 
 export interface Digest {
   met: { friend: string; name: string; channel: string; at: string }[]
@@ -58,4 +62,6 @@ export const parentApi = {
   bind: (code: string, voiceConsent: boolean) =>
     call<{ id: string }>('POST', '/api/bindings', { code, ai_companion: true, voice_consent: voiceConsent }),
   unbind: (kid: string) => call<void>('DELETE', `/api/kids/${kid}`),
+  settings: (kid: string) => call<{ friend_policy: FriendPolicy }>('GET', `/api/kids/${kid}/settings`),
+  setFriendPolicy: (kid: string, friend_policy: FriendPolicy) => call<void>('PUT', `/api/kids/${kid}/settings`, { friend_policy }),
 }

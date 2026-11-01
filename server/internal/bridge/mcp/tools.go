@@ -38,6 +38,8 @@ type Channels interface {
 type Relations interface {
 	Friends(ctx context.Context, d id.DeviceID) ([]relation.Friendship, error)
 	FilterFriends(ctx context.Context, viewer id.ParticipantID, ps []id.ParticipantID) []id.ParticipantID
+	Assent(ctx context.Context, d id.DeviceID) ([]id.DeviceID, error)
+	Decline(ctx context.Context, d id.DeviceID) []id.DeviceID
 }
 
 type Sharer interface {
@@ -71,7 +73,7 @@ func fail(text string) (ToolResult, error) { return ToolResult{Text: text, IsErr
 
 // BusinessTools 返回服务端执行的业务工具。
 func BusinessTools(s Services) []Tool {
-	tools := baseTools(s)
+	tools := append(baseTools(s), friendTools(s)...)
 	if s.Share != nil {
 		tools = append(tools, shareTool(s.Share))
 	}
@@ -282,6 +284,45 @@ func baseTools(s Services) []Tool {
 					return ok("附近还没有好朋友。")
 				}
 				return ok("附近的好朋友有：" + strings.Join(names, "、") + "。")
+			},
+		},
+	}
+}
+
+// friendTools 是交朋友时孩子的回答：靠近后小伙伴问"要和 X 交朋友吗"，孩子回答后由 AI 调用。规则见 docs/trust.md §4。
+func friendTools(s Services) []Tool {
+	devicesOf := func(ds []id.DeviceID) []id.ParticipantID {
+		ps := make([]id.ParticipantID, 0, len(ds))
+		for _, d := range ds {
+			ps = append(ps, id.Device(d))
+		}
+		return ps
+	}
+	return []Tool{
+		{
+			Name:        "self.friends.accept",
+			Description: "刚才问过小朋友要不要和某位小伙伴交朋友，小朋友说「好」「要」时调用。只有两个小朋友都说好，并且爸爸妈妈同意后，才会成为好朋友。",
+			InputSchema: noArgs(),
+			Call: func(ctx context.Context, d id.DeviceID, _ json.RawMessage) (ToolResult, error) {
+				others, err := s.Relations.Assent(ctx, d)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				if len(others) == 0 {
+					return fail("现在没有在问交朋友的事哦。想交朋友，就和对方的玩偶贴一贴。")
+				}
+				return ok("记下啦！等" + strings.Join(friendNames(ctx, s, d, devicesOf(others)), "、") + "也说好，再告诉爸爸妈妈。")
+			},
+		},
+		{
+			Name:        "self.friends.decline",
+			Description: "刚才问过小朋友要不要和某位小伙伴交朋友，小朋友说「不要」「不想」时调用。不会告诉对方是谁拒绝的。",
+			InputSchema: noArgs(),
+			Call: func(ctx context.Context, d id.DeviceID, _ json.RawMessage) (ToolResult, error) {
+				if len(s.Relations.Decline(ctx, d)) == 0 {
+					return fail("现在没有在问交朋友的事哦。")
+				}
+				return ok("好的，那就先不交朋友。")
 			},
 		},
 	}

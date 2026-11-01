@@ -1,5 +1,5 @@
-// Package relation 管理好友关系：状态机、"两台设备靠近"转为待确认请求、好友查询。
-// 谁有权确认由 parentapi 鉴权后决定；未开启自动确认时，只有 Confirm 能让两台设备成为好友。
+// Package relation 管理好友关系：靠近 → 两个孩子都说"好" → 两家监护人各自放行 → 好友。
+// 规则见 docs/trust.md §4。谁有权放行由 parentapi 鉴权后决定；每家是否自动放行由 AutoApprove 端口回答。
 package relation
 
 import (
@@ -23,9 +23,16 @@ const (
 	reportGap = 3 * time.Second
 
 	eventBuffer = 256
+
+	// 两个孩子要在这段时间内都说"好"。
+	askWindow = 60 * time.Second
+	// 家长拒绝后，同一对设备这么久内不再询问。
+	declineCooldown = 24 * time.Hour
+	// 等家长放行的请求过期时间。
+	pendingTTL = 7 * 24 * time.Hour
 )
 
-// AutoGuardian 记在 ConfirmedBy 上，表示这条好友关系是靠近后自动生效、未经家长点确认。
+// AutoGuardian 记在 ConfirmedBy 与 Approved* 上，表示这一侧（或整条关系）按家长"孩子自己交友"的设置自动放行。
 const AutoGuardian id.GuardianID = "auto"
 
 var (
@@ -35,18 +42,37 @@ var (
 
 type Status int
 
+// 数值存进库里，只能追加。
 const (
-	StatusPending Status = iota
-	StatusConfirmed
-	StatusRemoved
+	StatusPending   Status = iota // 两个孩子都同意了，等家长放行
+	StatusConfirmed               // 好友
+	StatusRemoved                 // 已解除（或请求过期）
+	StatusDeclined                // 家长拒绝；冷却期内不再询问
+	StatusAsking                  // 只在事件里出现：正在问两个孩子，不入库
 )
 
 type Friendship struct {
-	ID          string
-	A, B        id.DeviceID // A < B，一对只有一条
-	Status      Status
-	ConfirmedBy id.GuardianID
-	CreatedAt   time.Time
+	ID                   string
+	A, B                 id.DeviceID // A < B，一对只有一条
+	Status               Status
+	ConfirmedBy          id.GuardianID
+	ApprovedA, ApprovedB id.GuardianID // 每一侧由谁放行；空表示在等这一侧的家长
+	CreatedAt            time.Time
+}
+
+// WaitingFor 返回还在等哪一侧的家长放行。
+func (f Friendship) WaitingFor() []id.DeviceID {
+	var out []id.DeviceID
+	if f.Status != StatusPending {
+		return nil
+	}
+	if f.ApprovedA == "" {
+		out = append(out, f.A)
+	}
+	if f.ApprovedB == "" {
+		out = append(out, f.B)
+	}
+	return out
 }
 
 // Other 返回关系中 d 之外的那台设备。
@@ -65,9 +91,11 @@ type Peer struct {
 type EventKind int
 
 const (
-	Proposed EventKind = iota
-	Confirmed
-	Removed
+	Proposed  EventKind = iota // 两个孩子都同意了，等家长
+	Confirmed                  // 成为好友
+	Removed                    // 解除、家长拒绝或请求过期
+	Asked                      // 靠近了，问两个孩子要不要交朋友
+	Dropped                    // 询问作罢：有孩子说"不要"或超时
 )
 
 type Event struct {
@@ -89,28 +117,37 @@ type near struct {
 	since, last time.Time
 }
 
-type Relations struct {
-	repo   store.FriendshipRepo
-	now    func() time.Time
-	events chan Event
+// AutoApprove 回答设备 d 的家长是否设为"孩子自己交友、事后通知"。
+type AutoApprove func(ctx context.Context, d id.DeviceID) bool
 
-	// 开启后"靠近"直接成为好友，不等家长确认；家长端凭 ConfirmedBy == AutoGuardian 得知并可随时解除。
-	auto bool
+type asking struct {
+	a, b    bool // 两个孩子是否已说"好"
+	expires time.Time
+}
+
+type Relations struct {
+	repo        store.FriendshipRepo
+	now         func() time.Time
+	events      chan Event
+	autoApprove AutoApprove
 
 	// 好友快照：AreFriends 在热路径上，读不加锁，写时整份替换。
 	friends atomic.Pointer[map[pair]struct{}]
 
-	mu    sync.Mutex // 保护 near 与写路径
+	mu    sync.Mutex // 保护 near、asks 与写路径
 	close map[[2]id.DeviceID]near
+	asks  map[pair]*asking
 }
 
 // New 从存储装载已确认的好友。
 func New(ctx context.Context, repo store.FriendshipRepo) (*Relations, error) {
 	r := &Relations{
-		repo:   repo,
-		now:    time.Now,
-		events: make(chan Event, eventBuffer),
-		close:  map[[2]id.DeviceID]near{},
+		repo:        repo,
+		now:         time.Now,
+		events:      make(chan Event, eventBuffer),
+		close:       map[[2]id.DeviceID]near{},
+		asks:        map[pair]*asking{},
+		autoApprove: func(context.Context, id.DeviceID) bool { return false },
 	}
 	confirmed, err := repo.ListByStatus(ctx, int(StatusConfirmed))
 	if err != nil {
@@ -126,8 +163,8 @@ func New(ctx context.Context, repo store.FriendshipRepo) (*Relations, error) {
 
 func (r *Relations) Subscribe() <-chan Event { return r.events }
 
-// SetAutoConfirm 须在开始上报靠近之前调用。
-func (r *Relations) SetAutoConfirm(on bool) { r.auto = on }
+// SetAutoApprove 须在开始上报靠近之前调用；默认每一侧都要家长放行。
+func (r *Relations) SetAutoApprove(fn AutoApprove) { r.autoApprove = fn }
 
 // AreFriends 按参与者所属设备判断；热路径，不访问存储。
 func (r *Relations) AreFriends(_ context.Context, a, b id.ParticipantID) (bool, error) {
@@ -150,7 +187,7 @@ func (r *Relations) FilterFriends(ctx context.Context, viewer id.ParticipantID, 
 	return out
 }
 
-// Friends 返回设备的好友与待确认请求，不含已解除的。
+// Friends 返回设备的好友与等家长放行的请求，不含已解除、已拒绝的。
 func (r *Relations) Friends(ctx context.Context, d id.DeviceID) ([]Friendship, error) {
 	all, err := r.repo.ListByDevice(ctx, d)
 	if err != nil {
@@ -158,7 +195,7 @@ func (r *Relations) Friends(ctx context.Context, d id.DeviceID) ([]Friendship, e
 	}
 	var out []Friendship
 	for _, f := range all {
-		if Status(f.Status) != StatusRemoved {
+		if st := Status(f.Status); st == StatusPending || st == StatusConfirmed {
 			out = append(out, fromRecord(f))
 		}
 	}
@@ -211,49 +248,121 @@ func (r *Relations) OnProximity(ctx context.Context, d id.DeviceID, peers []Peer
 	r.mu.Unlock()
 
 	for _, p := range ready {
-		if err := r.propose(ctx, d, p); err != nil {
+		if err := r.ask(ctx, d, p); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *Relations) propose(ctx context.Context, x, y id.DeviceID) error {
+// ask 双方靠近后先问两个孩子；已是好友、已在等家长、刚被家长拒绝或正在问的，不再问。
+func (r *Relations) ask(ctx context.Context, x, y id.DeviceID) error {
+	p := makePair(x, y)
+	now := r.now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	status, by, kind := StatusPending, id.GuardianID(""), Proposed
-	if r.auto {
-		status, by, kind = StatusConfirmed, AutoGuardian, Confirmed
+	if q, ok := r.asks[p]; ok && now.Before(q.expires) {
+		return nil
 	}
-
-	f, err := r.repo.ByPair(ctx, x, y)
+	f, err := r.repo.ByPair(ctx, p.a, p.b)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		f = store.Friendship{ID: id.New(), A: x, B: y, Status: int(status), ConfirmedBy: by, CreatedAt: r.now()}
-		if err := r.repo.Create(ctx, f); err != nil {
-			return fmt.Errorf("propose %s/%s: %w", x, y, err)
-		}
-		f.A, f.B = makePair(x, y).a, makePair(x, y).b
 	case err != nil:
-		return fmt.Errorf("propose %s/%s: %w", x, y, err)
-	case Status(f.Status) != StatusRemoved:
-		return nil // 已是好友或已有未处理请求
-	default:
-		f.Status, f.ConfirmedBy = int(status), by
-		if err := r.repo.Update(ctx, f); err != nil {
-			return fmt.Errorf("propose %s/%s: %w", x, y, err)
+		return fmt.Errorf("ask %s/%s: %w", x, y, err)
+	case Status(f.Status) == StatusPending || Status(f.Status) == StatusConfirmed:
+		return nil
+	case Status(f.Status) == StatusDeclined && now.Sub(f.UpdatedAt) < declineCooldown:
+		return nil
+	}
+	r.asks[p] = &asking{expires: now.Add(askWindow)}
+	r.emit(Event{Kind: Asked, Friendship: Friendship{A: p.a, B: p.b, Status: StatusAsking, CreatedAt: now}})
+	return nil
+}
+
+// Assent 记下孩子 d 说"好"：对 d 所有还在询问中的配对生效。两个孩子都说"好"后进入家长关卡。
+// 返回这次说"好"涉及的对方设备。
+func (r *Relations) Assent(ctx context.Context, d id.DeviceID) ([]id.DeviceID, error) {
+	now := r.now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var others []id.DeviceID
+	for p, q := range r.asks {
+		if p.a != d && p.b != d {
+			continue
+		}
+		if !now.Before(q.expires) {
+			continue // 由 Sweep 清理并通知
+		}
+		if p.a == d {
+			q.a = true
+		} else {
+			q.b = true
+		}
+		others = append(others, otherOf(p, d))
+		if q.a && q.b {
+			delete(r.asks, p)
+			if err := r.promote(ctx, p, now); err != nil {
+				return others, err
+			}
 		}
 	}
-	if status == StatusConfirmed {
-		r.setFriend(pair{f.A, f.B}, true)
+	return others, nil
+}
+
+// Decline 孩子 d 说"不要"：作罢 d 所有还在询问中的配对，不打扰家长。
+func (r *Relations) Decline(_ context.Context, d id.DeviceID) []id.DeviceID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var others []id.DeviceID
+	for p := range r.asks {
+		if p.a == d || p.b == d {
+			delete(r.asks, p)
+			others = append(others, otherOf(p, d))
+			r.emit(Event{Kind: Dropped, Friendship: Friendship{A: p.a, B: p.b, Status: StatusAsking}})
+		}
+	}
+	return others
+}
+
+// promote 两个孩子都同意后：每一侧按自家家长的设置自动放行或等待批准；两侧都放行即成为好友。
+func (r *Relations) promote(ctx context.Context, p pair, now time.Time) error {
+	f, err := r.repo.ByPair(ctx, p.a, p.b)
+	fresh := errors.Is(err, store.ErrNotFound)
+	if err != nil && !fresh {
+		return fmt.Errorf("promote %s/%s: %w", p.a, p.b, err)
+	}
+	if fresh {
+		f = store.Friendship{ID: id.New(), A: p.a, B: p.b, CreatedAt: now}
+	}
+	f.ApprovedA, f.ApprovedB, f.ConfirmedBy, f.UpdatedAt = "", "", "", now
+	if r.autoApprove(ctx, p.a) {
+		f.ApprovedA = AutoGuardian
+	}
+	if r.autoApprove(ctx, p.b) {
+		f.ApprovedB = AutoGuardian
+	}
+	kind := Proposed
+	f.Status = int(StatusPending)
+	if f.ApprovedA != "" && f.ApprovedB != "" {
+		kind, f.Status, f.ConfirmedBy = Confirmed, int(StatusConfirmed), AutoGuardian
+	}
+	if fresh {
+		err = r.repo.Create(ctx, f)
+	} else {
+		err = r.repo.Update(ctx, f)
+	}
+	if err != nil {
+		return fmt.Errorf("promote %s/%s: %w", p.a, p.b, err)
+	}
+	if kind == Confirmed {
+		r.setFriend(p, true)
 	}
 	r.emit(Event{Kind: kind, Friendship: fromRecord(f)})
 	return nil
 }
 
-// Confirm 让待确认请求生效；调用方须先确认 by 有权代表其中一台设备。
-func (r *Relations) Confirm(ctx context.Context, reqID string, by id.GuardianID) error {
+// Confirm 由 side 的监护人 by 放行这一侧；调用方须先确认 by 是 side 的监护人。两侧都放行后成为好友。
+func (r *Relations) Confirm(ctx context.Context, reqID string, side id.DeviceID, by id.GuardianID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -267,17 +376,70 @@ func (r *Relations) Confirm(ctx context.Context, reqID string, by id.GuardianID)
 	if Status(f.Status) != StatusPending {
 		return ErrNotPending
 	}
-	f.Status, f.ConfirmedBy = int(StatusConfirmed), by
+	switch side {
+	case f.A:
+		f.ApprovedA = by
+	case f.B:
+		f.ApprovedB = by
+	default:
+		return ErrNotFound
+	}
+	f.UpdatedAt = r.now()
+	kind := Event{Kind: Proposed}
+	if f.ApprovedA != "" && f.ApprovedB != "" {
+		f.Status, f.ConfirmedBy = int(StatusConfirmed), by
+		kind.Kind = Confirmed
+	}
 	if err := r.repo.Update(ctx, f); err != nil {
 		return fmt.Errorf("confirm %s: %w", reqID, err)
 	}
-	r.setFriend(pair{f.A, f.B}, true)
-	r.emit(Event{Kind: Confirmed, Friendship: fromRecord(f)})
+	if kind.Kind == Confirmed {
+		r.setFriend(pair{f.A, f.B}, true)
+		kind.Friendship = fromRecord(f)
+		r.emit(kind)
+	}
 	return nil
 }
 
-// Remove 立即解除好友（或拒绝待确认请求）并发事件，voice 据此中断正在进行的转发。
+// Sweep 作罢超时的询问、让过期的家长请求失效；由 app 定时调用。
+func (r *Relations) Sweep(ctx context.Context) error {
+	now := r.now()
+	r.mu.Lock()
+	for p, q := range r.asks {
+		if !now.Before(q.expires) {
+			delete(r.asks, p)
+			r.emit(Event{Kind: Dropped, Friendship: Friendship{A: p.a, B: p.b, Status: StatusAsking}})
+		}
+	}
+	r.mu.Unlock()
+	pending, err := r.repo.ListByStatus(ctx, int(StatusPending))
+	if err != nil {
+		return fmt.Errorf("sweep friend requests: %w", err)
+	}
+	for _, f := range pending {
+		if since := f.UpdatedAt; !since.IsZero() && now.Sub(since) >= pendingTTL || since.IsZero() && now.Sub(f.CreatedAt) >= pendingTTL {
+			if err := r.remove(ctx, f.A, f.B, false); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func otherOf(p pair, d id.DeviceID) id.DeviceID {
+	if p.a == d {
+		return p.b
+	}
+	return p.a
+}
+
+// Remove 立即解除好友并发事件，voice 据此中断正在进行的转发；对等家长放行的请求，等同家长拒绝。
 func (r *Relations) Remove(ctx context.Context, a, b id.DeviceID) error {
+	return r.remove(ctx, a, b, true)
+}
+
+// remove 中 decline 为 false 表示请求过期：不进入冷却期。
+func (r *Relations) remove(ctx context.Context, a, b id.DeviceID, decline bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -288,10 +450,18 @@ func (r *Relations) Remove(ctx context.Context, a, b id.DeviceID) error {
 	if err != nil {
 		return fmt.Errorf("remove %s/%s: %w", a, b, err)
 	}
-	if Status(f.Status) == StatusRemoved {
+	switch Status(f.Status) {
+	case StatusRemoved, StatusDeclined:
 		return nil
+	case StatusPending:
+		f.Status = int(StatusRemoved)
+		if decline {
+			f.Status = int(StatusDeclined)
+		}
+	default:
+		f.Status = int(StatusRemoved)
 	}
-	f.Status = int(StatusRemoved)
+	f.UpdatedAt = r.now()
 	if err := r.repo.Update(ctx, f); err != nil {
 		return fmt.Errorf("remove %s/%s: %w", a, b, err)
 	}
@@ -323,7 +493,8 @@ func (r *Relations) emit(e Event) {
 }
 
 func fromRecord(f store.Friendship) Friendship {
-	return Friendship{ID: f.ID, A: f.A, B: f.B, Status: Status(f.Status), ConfirmedBy: f.ConfirmedBy, CreatedAt: f.CreatedAt}
+	return Friendship{ID: f.ID, A: f.A, B: f.B, Status: Status(f.Status), ConfirmedBy: f.ConfirmedBy,
+		ApprovedA: f.ApprovedA, ApprovedB: f.ApprovedB, CreatedAt: f.CreatedAt}
 }
 
 // RemoveAll 解除设备的全部好友与请求，设备解绑（恢复出厂）时用；每一条都发 Removed，voice 据此中断转发。

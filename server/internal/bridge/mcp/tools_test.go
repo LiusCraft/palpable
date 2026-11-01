@@ -216,3 +216,44 @@ func TestSchemasAreValidJSONSchema(t *testing.T) {
 		}
 	}
 }
+
+type fakeAsks struct {
+	*relation.Relations
+	others []id.DeviceID
+	err    error
+}
+
+func (f fakeAsks) Assent(context.Context, id.DeviceID) ([]id.DeviceID, error) { return f.others, f.err }
+func (f fakeAsks) Decline(context.Context, id.DeviceID) []id.DeviceID         { return f.others }
+
+func TestFriendAnswerTools(t *testing.T) {
+	g := newRig(t)
+	tools := map[string]Tool{}
+	build := func(fa fakeAsks) {
+		for _, tl := range BusinessTools(Services{Devices: g.devs, Zones: g.zones, Channels: g.chans, Relations: fa}) {
+			tools[tl.Name] = tl
+		}
+	}
+	call := func(name string) ToolResult {
+		res, err := tools[name].Call(context.Background(), dev, json.RawMessage(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	build(fakeAsks{})
+	if !call("self.friends.accept").IsError || !call("self.friends.decline").IsError {
+		t.Fatal("no outstanding ask should be an error result")
+	}
+	build(fakeAsks{others: []id.DeviceID{friend}})
+	if r := call("self.friends.accept"); r.IsError || !strings.Contains(r.Text, "一位好朋友") {
+		t.Fatalf("accept = %+v", r)
+	}
+	if r := call("self.friends.decline"); r.IsError {
+		t.Fatalf("decline = %+v", r)
+	}
+	build(fakeAsks{err: context.Canceled})
+	if _, err := tools["self.friends.accept"].Call(context.Background(), dev, nil); err == nil {
+		t.Fatal("store error should propagate")
+	}
+}

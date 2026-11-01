@@ -137,15 +137,29 @@ function Members({ device }: { device: VirtualDevice }) {
           return (
             <li key={d.device} className="flex items-center justify-between">
               <span className="text-slate-500">🐾 {d.name || '玩偶'}</span>
-              <span className={`text-xs ${rel === 'confirmed' ? 'text-slate-400' : rel === 'pending' ? 'text-amber-500' : 'text-rose-500'}`}>
-                {rel === 'confirmed' ? '未加入' : rel === 'pending' ? copy.park.pending : copy.park.blocked}
+              <span
+                className={`text-xs ${rel === 'confirmed' ? 'text-slate-400' : rel === 'pending' || rel === 'asking' ? 'text-amber-500' : 'text-rose-500'}`}
+              >
+                {rel === 'confirmed' ? '未加入' : rel === 'pending' ? copy.park.pending : rel === 'asking' ? copy.park.asking : copy.park.blocked}
               </span>
             </li>
           )
         })}
       </ul>
+      {Object.values(s.friends).some((f) => f.status === 'asking') && (
+        <div className="mt-3 space-y-2 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+          <p>{copy.park.askHintFriend}</p>
+          {/* 演示遥控：灵矽不可用时代替孩子说"好 / 不要"，服务端执行与 AI 相同的工具 */}
+          <div className="flex gap-2">
+            <Button onClick={() => void sayToCompanion(s.mac, 'self.friends.accept')}>{copy.park.friendYes}</Button>
+            <Button tone="ghost" onClick={() => void sayToCompanion(s.mac, 'self.friends.decline')}>
+              {copy.park.friendNo}
+            </Button>
+          </div>
+        </div>
+      )}
       {Object.values(s.friends).some((f) => f.status === 'pending') && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">有新朋友在等爸爸妈妈确认</p>
+        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">有新朋友在等爸爸妈妈同意</p>
       )}
     </div>
   )

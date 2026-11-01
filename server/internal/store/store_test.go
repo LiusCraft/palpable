@@ -347,3 +347,39 @@ func TestDeviceKeys(t *testing.T) {
 		}
 	})
 }
+
+func TestFriendshipApprovalsFollowOrder(t *testing.T) {
+	run(t, func(t *testing.T, ctx context.Context, s Store) {
+		r := s.Friendships()
+		// 传入 B < A 的顺序：仓储规范为 A < B，Approved 随之交换。
+		must(t, r.Create(ctx, Friendship{ID: "f", A: macB, B: macA, ApprovedA: "gb", CreatedAt: t0, UpdatedAt: t0}))
+		f, err := r.Get(ctx, "f")
+		must(t, err)
+		if f.A != macA || f.ApprovedA != "" || f.ApprovedB != "gb" || !f.UpdatedAt.Equal(roundMillis(t0)) {
+			t.Fatalf("got %+v", f)
+		}
+		// 以相反顺序更新也写到正确的一侧。
+		must(t, r.Update(ctx, Friendship{ID: "f", A: macB, B: macA, Status: 1, ApprovedA: "gb", ApprovedB: "ga", UpdatedAt: t0.Add(time.Hour)}))
+		f, _ = r.Get(ctx, "f")
+		if f.ApprovedA != "ga" || f.ApprovedB != "gb" || f.Status != 1 || !f.UpdatedAt.Equal(roundMillis(t0.Add(time.Hour))) {
+			t.Fatalf("after reversed update %+v", f)
+		}
+		must(t, r.Update(ctx, Friendship{ID: "f", A: macA, B: macB, ApprovedA: "x", ApprovedB: "y"}))
+		f, _ = r.Get(ctx, "f")
+		if f.ApprovedA != "x" || f.ApprovedB != "y" {
+			t.Fatalf("after ordered update %+v", f)
+		}
+		d := s.Devices()
+		must(t, d.Create(ctx, Device{ID: macC, FriendPolicy: 1, CreatedAt: t0}))
+		got, _ := d.Get(ctx, macC)
+		if got.FriendPolicy != 1 {
+			t.Fatalf("friend policy %+v", got)
+		}
+		got.FriendPolicy = 0
+		must(t, d.Update(ctx, got))
+		got, _ = d.Get(ctx, macC)
+		if got.FriendPolicy != 0 {
+			t.Fatalf("friend policy after update %+v", got)
+		}
+	})
+}

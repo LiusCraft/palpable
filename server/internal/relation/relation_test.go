@@ -77,21 +77,54 @@ func friends(t *testing.T, r *Relations, x, y id.DeviceID) bool {
 	return ok
 }
 
-func TestProximityProposesAfterHold(t *testing.T) {
+// agree 让两个孩子都说"好"，返回进入家长关卡（或直接成为好友）的事件。
+func agree(t *testing.T, r *Relations) Event {
+	t.Helper()
+	ctx := context.Background()
+	if others, err := r.Assent(ctx, a); err != nil || len(others) != 1 || others[0] != b {
+		t.Fatalf("assent a: %v %v", others, err)
+	}
+	noEvent(t, r) // 只有一个孩子说"好"：还不够
+	if _, err := r.Assent(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	return nextEvent(t, r)
+}
+
+// pendingRequest 走完靠近 → 两个孩子同意，停在等家长。
+func pendingRequest(t *testing.T, r *Relations, clk *clock) Friendship {
+	t.Helper()
+	bothNear(t, r, clk, 5, 0.9)
+	if e := nextEvent(t, r); e.Kind != Asked {
+		t.Fatalf("want Asked, got %+v", e)
+	}
+	e := agree(t, r)
+	if e.Kind != Proposed || e.Friendship.Status != StatusPending {
+		t.Fatalf("want Proposed, got %+v", e)
+	}
+	return e.Friendship
+}
+
+func TestProximityAsksKidsAfterHold(t *testing.T) {
 	r, clk, _ := newRelations(t)
 	bothNear(t, r, clk, 3, 0.9) // 0、0.5、1.0 秒：还不够
 	noEvent(t, r)
 
 	bothNear(t, r, clk, 2, 0.9) // 到 1.5 秒
 	e := nextEvent(t, r)
-	if e.Kind != Proposed || e.Friendship.A != a || e.Friendship.B != b || e.Friendship.Status != StatusPending {
+	if e.Kind != Asked || e.Friendship.A != a || e.Friendship.B != b || e.Friendship.Status != StatusAsking {
 		t.Fatalf("event = %+v", e)
 	}
+	bothNear(t, r, clk, 4, 0.9) // 正在问：不重复问
+	noEvent(t, r)
 	if friends(t, r, a, b) {
-		t.Fatal("pending request must not make them friends")
+		t.Fatal("asking must not make them friends")
 	}
-
-	bothNear(t, r, clk, 4, 0.9) // 已有未处理请求：不重复提议
+	f := agree(t, r)
+	if f.Kind != Proposed || len(f.Friendship.WaitingFor()) != 2 {
+		t.Fatalf("both guardians should be waited for: %+v", f)
+	}
+	bothNear(t, r, clk, 4, 0.9) // 已在等家长：不再问
 	noEvent(t, r)
 }
 
@@ -116,30 +149,76 @@ func TestProximityInterruptionRestartsTimer(t *testing.T) {
 	bothNear(t, r, clk, 3, 0.9)
 	noEvent(t, r)
 	bothNear(t, r, clk, 1, 0.9)
-	if e := nextEvent(t, r); e.Kind != Proposed {
+	if e := nextEvent(t, r); e.Kind != Asked {
 		t.Fatalf("event = %+v", e)
 	}
 }
 
-func TestConfirmRemoveAndRepropose(t *testing.T) {
-	r, clk, s := newRelations(t)
+func TestKidDeclineOrTimeoutDropsAsk(t *testing.T) {
+	r, clk, _ := newRelations(t)
 	ctx := context.Background()
 	bothNear(t, r, clk, 5, 0.9)
-	req := nextEvent(t, r).Friendship
+	nextEvent(t, r)
+	if others := r.Decline(ctx, b); len(others) != 1 || others[0] != a {
+		t.Fatalf("decline: %v", others)
+	}
+	if e := nextEvent(t, r); e.Kind != Dropped {
+		t.Fatalf("want Dropped, got %+v", e)
+	}
+	// 说"不要"之后再说"好"，没有可同意的询问。
+	if others, _ := r.Assent(ctx, a); len(others) != 0 {
+		t.Fatalf("assent after decline: %v", others)
+	}
 
-	if err := r.Confirm(ctx, req.ID, "g1"); err != nil {
+	// 再靠近会重新问；这次没人回答，超时作罢。
+	bothNear(t, r, clk, 5, 0.9)
+	nextEvent(t, r)
+	_, _ = r.Assent(ctx, a)
+	clk.advance(askWindow)
+	if others, _ := r.Assent(ctx, b); len(others) != 0 {
+		t.Fatalf("assent after expiry: %v", others)
+	}
+	if err := r.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if e := nextEvent(t, r); e.Kind != Confirmed || e.Friendship.ConfirmedBy != "g1" {
+	if e := nextEvent(t, r); e.Kind != Dropped {
+		t.Fatalf("want Dropped after timeout, got %+v", e)
+	}
+	noEvent(t, r)
+}
+
+func TestEachGuardianApprovesOwnSide(t *testing.T) {
+	r, clk, s := newRelations(t)
+	ctx := context.Background()
+	req := pendingRequest(t, r, clk)
+
+	if err := r.Confirm(ctx, req.ID, a, "ga"); err != nil {
+		t.Fatal(err)
+	}
+	noEvent(t, r) // 还在等 b 的家长
+	if friends(t, r, a, b) {
+		t.Fatal("one side approved is not enough")
+	}
+	got, _ := r.Request(ctx, req.ID)
+	if w := got.WaitingFor(); len(w) != 1 || w[0] != b {
+		t.Fatalf("waiting for %v", w)
+	}
+	if !errors.Is(r.Confirm(ctx, req.ID, c, "gc"), ErrNotFound) {
+		t.Fatal("a device outside the request cannot approve")
+	}
+	if err := r.Confirm(ctx, req.ID, b, "gb"); err != nil {
+		t.Fatal(err)
+	}
+	if e := nextEvent(t, r); e.Kind != Confirmed || e.Friendship.ConfirmedBy != "gb" {
 		t.Fatalf("event = %+v", e)
 	}
 	if !friends(t, r, a, b) || !friends(t, r, b, a) {
 		t.Fatal("confirmed pair must be friends both ways")
 	}
-	if !errors.Is(r.Confirm(ctx, req.ID, "g1"), ErrNotPending) {
+	if !errors.Is(r.Confirm(ctx, req.ID, a, "ga"), ErrNotPending) {
 		t.Fatal("confirming twice must fail")
 	}
-	if !errors.Is(r.Confirm(ctx, "nope", "g1"), ErrNotFound) {
+	if !errors.Is(r.Confirm(ctx, "nope", a, "ga"), ErrNotFound) {
 		t.Fatal("unknown request")
 	}
 
@@ -161,39 +240,77 @@ func TestConfirmRemoveAndRepropose(t *testing.T) {
 	if friends(t, r, a, b) {
 		t.Fatal("removed pair must not be friends")
 	}
-	fs, _ := r.Friends(ctx, a)
-	if len(fs) != 0 {
+	if fs, _ := r.Friends(ctx, a); len(fs) != 0 {
 		t.Fatalf("Friends after remove = %+v", fs)
 	}
 
-	// 解除后再次贴近，可以重新发起请求。
-	bothNear(t, r, clk, 5, 0.9)
-	if e := nextEvent(t, r); e.Kind != Proposed || e.Friendship.ID != req.ID {
-		t.Fatalf("event = %+v", e)
+	// 解除后再次贴近，可以重新问；沿用同一条记录，放行要重新来。
+	again := pendingRequest(t, r, clk)
+	if again.ID != req.ID || len(again.WaitingFor()) != 2 {
+		t.Fatalf("re-request = %+v", again)
 	}
 }
 
-func TestAutoConfirmOnProximity(t *testing.T) {
+func TestGuardianDeclineCoolsDown(t *testing.T) {
 	r, clk, _ := newRelations(t)
-	r.SetAutoConfirm(true)
 	ctx := context.Background()
-	bothNear(t, r, clk, 5, 0.9)
-	e := nextEvent(t, r)
-	if e.Kind != Confirmed || e.Friendship.Status != StatusConfirmed || e.Friendship.ConfirmedBy != AutoGuardian {
-		t.Fatalf("event = %+v", e)
-	}
-	if !friends(t, r, a, b) {
-		t.Fatal("auto-confirmed pair must be friends without a parent click")
-	}
-	noEvent(t, r)
-
-	// 解除后再次贴近，同样直接生效并再次通知家长。
-	if err := r.Remove(ctx, a, b); err != nil {
+	pendingRequest(t, r, clk)
+	if err := r.Remove(ctx, a, b); err != nil { // 家长拒绝
 		t.Fatal(err)
 	}
-	nextEvent(t, r)
+	if e := nextEvent(t, r); e.Kind != Removed {
+		t.Fatalf("event = %+v", e)
+	}
 	bothNear(t, r, clk, 5, 0.9)
-	if e := nextEvent(t, r); e.Kind != Confirmed || e.Friendship.ConfirmedBy != AutoGuardian || !friends(t, r, a, b) {
+	noEvent(t, r) // 冷却期内不再问
+	clk.advance(declineCooldown)
+	bothNear(t, r, clk, 5, 0.9)
+	if e := nextEvent(t, r); e.Kind != Asked {
+		t.Fatalf("after cooldown: %+v", e)
+	}
+}
+
+func TestPendingRequestExpires(t *testing.T) {
+	r, clk, _ := newRelations(t)
+	ctx := context.Background()
+	pendingRequest(t, r, clk)
+	clk.advance(pendingTTL)
+	if err := r.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if e := nextEvent(t, r); e.Kind != Removed {
+		t.Fatalf("event = %+v", e)
+	}
+	// 过期不算拒绝：再靠近马上能问。
+	bothNear(t, r, clk, 5, 0.9)
+	if e := nextEvent(t, r); e.Kind != Asked {
+		t.Fatalf("after expiry: %+v", e)
+	}
+}
+
+func TestAutoApprovePerSide(t *testing.T) {
+	r, clk, _ := newRelations(t)
+	ctx := context.Background()
+	// a 的家长设为"自己交友"，b 的家长要批准。
+	r.SetAutoApprove(func(_ context.Context, d id.DeviceID) bool { return d == a })
+	req := pendingRequest(t, r, clk)
+	if req.ApprovedA != AutoGuardian || req.ApprovedB != "" {
+		t.Fatalf("approvals %+v", req)
+	}
+	if err := r.Confirm(ctx, req.ID, b, "gb"); err != nil {
+		t.Fatal(err)
+	}
+	if e := nextEvent(t, r); e.Kind != Confirmed {
+		t.Fatalf("event = %+v", e)
+	}
+
+	// 两家都设为"自己交友"：两个孩子都说"好"就成为好友，ConfirmedBy 记 auto。
+	r2, clk2, _ := newRelations(t)
+	r2.SetAutoApprove(func(context.Context, id.DeviceID) bool { return true })
+	bothNear(t, r2, clk2, 5, 0.9)
+	nextEvent(t, r2)
+	e := agree(t, r2)
+	if e.Kind != Confirmed || e.Friendship.ConfirmedBy != AutoGuardian || !friends(t, r2, a, b) {
 		t.Fatalf("event = %+v", e)
 	}
 }
@@ -201,9 +318,10 @@ func TestAutoConfirmOnProximity(t *testing.T) {
 func TestFilterFriendsAndAgents(t *testing.T) {
 	r, clk, _ := newRelations(t)
 	ctx := context.Background()
+	r.SetAutoApprove(func(context.Context, id.DeviceID) bool { return true })
 	bothNear(t, r, clk, 5, 0.9)
-	_ = r.Confirm(ctx, nextEvent(t, r).Friendship.ID, "g1")
 	nextEvent(t, r)
+	agree(t, r)
 
 	got := r.FilterFriends(ctx, id.Device(a), []id.ParticipantID{id.Device(a), id.Device(b), id.Device(c)})
 	if len(got) != 1 || got[0] != id.Device(b) {

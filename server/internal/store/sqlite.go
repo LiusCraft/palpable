@@ -146,12 +146,12 @@ func queryList[T any](ctx context.Context, db *sql.DB, scan func(rowScanner) (T,
 
 type sqlDevices struct{ db *sql.DB }
 
-const deviceCols = "device_id, skin, style_id, agent_id, doll_name, kid_name, stage, guardian_id, voice_consent, speaker_id, created_at"
+const deviceCols = "device_id, skin, style_id, agent_id, doll_name, kid_name, stage, guardian_id, voice_consent, speaker_id, friend_policy, created_at"
 
 func scanDevice(r rowScanner) (Device, error) {
 	var d Device
 	var created int64
-	err := r.Scan(&d.ID, &d.Skin, &d.StyleID, &d.AgentID, &d.DollName, &d.KidName, &d.Stage, &d.Guardian, &d.VoiceConsent, &d.SpeakerID, &created)
+	err := r.Scan(&d.ID, &d.Skin, &d.StyleID, &d.AgentID, &d.DollName, &d.KidName, &d.Stage, &d.Guardian, &d.VoiceConsent, &d.SpeakerID, &d.FriendPolicy, &created)
 	d.CreatedAt = fromMillis(created)
 	return d, err
 }
@@ -165,8 +165,8 @@ func (r sqlDevices) Get(ctx context.Context, d id.DeviceID) (Device, error) {
 }
 
 func (r sqlDevices) Create(ctx context.Context, d Device) error {
-	_, err := r.db.ExecContext(ctx, "INSERT INTO device ("+deviceCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		d.ID, d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, toMillis(d.CreatedAt))
+	_, err := r.db.ExecContext(ctx, "INSERT INTO device ("+deviceCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		d.ID, d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, d.FriendPolicy, toMillis(d.CreatedAt))
 	if isUniqueViolation(err) {
 		err = ErrConflict
 	}
@@ -178,8 +178,8 @@ func (r sqlDevices) Create(ctx context.Context, d Device) error {
 
 func (r sqlDevices) Update(ctx context.Context, d Device) error {
 	res, err := r.db.ExecContext(ctx, `UPDATE device SET skin = ?, style_id = ?, agent_id = ?, doll_name = ?, kid_name = ?,
-		stage = ?, guardian_id = ?, voice_consent = ?, speaker_id = ? WHERE device_id = ?`,
-		d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, d.ID)
+		stage = ?, guardian_id = ?, voice_consent = ?, speaker_id = ?, friend_policy = ? WHERE device_id = ?`,
+		d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, d.FriendPolicy, d.ID)
 	if err == nil {
 		err = expectOneRow(res)
 	}
@@ -287,13 +287,13 @@ func (r sqlGuardians) Put(ctx context.Context, g Guardian) error {
 
 type sqlFriendships struct{ db *sql.DB }
 
-const friendshipCols = "id, a, b, status, confirmed_by, created_at"
+const friendshipCols = "id, a, b, status, confirmed_by, approved_a, approved_b, created_at, updated_at"
 
 func scanFriendship(r rowScanner) (Friendship, error) {
 	var f Friendship
-	var created int64
-	err := r.Scan(&f.ID, &f.A, &f.B, &f.Status, &f.ConfirmedBy, &created)
-	f.CreatedAt = fromMillis(created)
+	var created, updated int64
+	err := r.Scan(&f.ID, &f.A, &f.B, &f.Status, &f.ConfirmedBy, &f.ApprovedA, &f.ApprovedB, &created, &updated)
+	f.CreatedAt, f.UpdatedAt = fromMillis(created), fromMillis(updated)
 	return f, err
 }
 
@@ -318,9 +318,9 @@ func (r sqlFriendships) Create(ctx context.Context, f Friendship) error {
 	if f.A == f.B {
 		return fmt.Errorf("create friendship %s: %w", f.ID, errSelfFriendship)
 	}
-	f.A, f.B = orderPair(f.A, f.B)
-	_, err := r.db.ExecContext(ctx, "INSERT INTO friendship ("+friendshipCols+") VALUES (?, ?, ?, ?, ?, ?)",
-		f.ID, f.A, f.B, f.Status, f.ConfirmedBy, toMillis(f.CreatedAt))
+	f.normalize()
+	_, err := r.db.ExecContext(ctx, "INSERT INTO friendship ("+friendshipCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		f.ID, f.A, f.B, f.Status, f.ConfirmedBy, f.ApprovedA, f.ApprovedB, toMillis(f.CreatedAt), toMillis(f.UpdatedAt))
 	if isUniqueViolation(err) {
 		err = ErrConflict
 	}
@@ -331,7 +331,11 @@ func (r sqlFriendships) Create(ctx context.Context, f Friendship) error {
 }
 
 func (r sqlFriendships) Update(ctx context.Context, f Friendship) error {
-	res, err := r.db.ExecContext(ctx, "UPDATE friendship SET status = ?, confirmed_by = ? WHERE id = ?", f.Status, f.ConfirmedBy, f.ID)
+	// 按库里的 A、B 顺序写 Approved*：调用方传入的 A、B 与库里相反时先交换。
+	res, err := r.db.ExecContext(ctx, `UPDATE friendship SET status = ?, confirmed_by = ?,
+		approved_a = CASE WHEN a = ? THEN ? ELSE ? END, approved_b = CASE WHEN a = ? THEN ? ELSE ? END,
+		updated_at = ? WHERE id = ?`,
+		f.Status, f.ConfirmedBy, f.A, f.ApprovedA, f.ApprovedB, f.A, f.ApprovedB, f.ApprovedA, toMillis(f.UpdatedAt), f.ID)
 	if err == nil {
 		err = expectOneRow(res)
 	}

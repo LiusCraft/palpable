@@ -85,7 +85,9 @@ ai.Say(d, 「<孩子名>，我是<小伙伴名>」)
 
 | 事件 | 动作 |
 | --- | --- |
-| `relation.Proposed` | 双方 `friend.state{pending}` + `haptic double_tap` + `sound friend` |
+| `relation.Asked` | 双方 `friend.state{asking}` + `haptic double_tap` + `sound friend`；已就绪的设备由小伙伴问"要和 X 交朋友吗"（`sayFriendAsk`） |
+| `relation.Dropped` | 双方 `friend.state{removed}`（清掉询问提示） |
+| `relation.Proposed` | 双方 `friend.state{pending}`；小伙伴说"去告诉爸爸妈妈"（`sayFriendPending`） |
 | `relation.Confirmed` | 双方 `friend.state{confirmed}` + 同上提示；双方各记 `RecordMet` |
 | `relation.Removed` | 双方 `friend.state{removed}`；`voice.OnFriendRemoved` |
 | `channel.Joined` | 本机 `channel.state{joined}` + `sound`；对**同频道好友**（经 `FilterFriends`）互发 `presence{join}`，互记 `RecordMet`；`world` |

@@ -138,3 +138,24 @@ func TestUnbindOnlyByOwner(t *testing.T) {
 		t.Fatalf("claim missing: %v", err)
 	}
 }
+
+func TestFriendPolicy(t *testing.T) {
+	ctx := context.Background()
+	_, devs, _ := newBinder(t)
+	d := id.DeviceID("02:00:00:00:00:01")
+	if devs.AutoApproveFriends(ctx, d) {
+		t.Fatal("default must require guardian approval")
+	}
+	if err := devs.SetFriendPolicy(ctx, d, FriendNotify); err != nil {
+		t.Fatal(err)
+	}
+	if !devs.AutoApproveFriends(ctx, d) {
+		t.Fatal("notify policy should auto approve")
+	}
+	if err := devs.SetFriendPolicy(ctx, d, 9); err == nil {
+		t.Fatal("unknown policy should fail")
+	}
+	if devs.AutoApproveFriends(ctx, "02:00:00:00:00:99") {
+		t.Fatal("unknown device must not auto approve")
+	}
+}
