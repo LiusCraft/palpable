@@ -22,6 +22,8 @@ func (d *Devices) Bind(ctx, id, GuardianID) error                        // 演�
 func (d *Devices) Claim(ctx, id, GuardianID, voiceConsent bool) error    // 已绑定 → ErrAlreadyBound（激活锁）
 func (d *Devices) Unbind(ctx, id, GuardianID) (Profile, error)           // 非本人 → ErrNotYourDevice；删档案
 func (d *Devices) SetVoiceConsent(ctx, id, on bool) error
+func (d *Devices) GrantVoice(ctx, id) error    // 家长补开；只在 StageFresh，否则 ErrNotOnboarding
+func (d *Devices) RevokeVoice(ctx, id) error   // 关闭即删除：从当前智能体的 speaker-config 解绑 → 删声纹 → 删说话人 → 清 SpeakerID 与同意；灵矽失败时档案不变
 func (d *Devices) ByGuardian(ctx, GuardianID) ([]Profile, error)
 func (d *Devices) Delete(ctx, id) error                                  // 同一事务删好友、群成员、历史
 func (d *Devices) Subscribe() <-chan Named                               // {Device, DollName, KidName}

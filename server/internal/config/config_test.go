@@ -54,3 +54,14 @@ func TestLoadRejectsReadFailure(t *testing.T) {
 		t.Fatal("expected error for unreadable path")
 	}
 }
+
+// 示例配置随字段一起改；拼错或漏改的键会被 KnownFields 拒绝。
+func TestExampleConfigLoads(t *testing.T) {
+	cfg, err := Load("../../config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WeChat.Enabled() {
+		t.Fatal("example config must not ship WeChat credentials")
+	}
+}

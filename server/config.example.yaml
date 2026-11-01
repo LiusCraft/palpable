@@ -6,6 +6,11 @@ db_path: palpable.db  # SQLite 文件，不入库
 auth:
   enrollment: open
 
+# 家长端微信小程序登录：两项都填才开放微信登录。secret 只放在这里，不入库。
+wechat:
+  app_id: ""
+  secret: ""
+
 # 演示预置：新设备自动绑定到这个家长，并预置声纹登记的同意（产品里由家长端取得）。
 demo:
   guardian: demo-parent

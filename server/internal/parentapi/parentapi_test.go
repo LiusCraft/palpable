@@ -105,7 +105,7 @@ func TestAuthAndOwnership(t *testing.T) {
 	code, body := g.do(t, "GET", "/api/kids", token)
 	var kids []Kid
 	_ = json.Unmarshal(body, &kids)
-	if code != 200 || len(kids) != 1 || kids[0].ID != kidA || kids[0].DollName != "小龙" || kids[0].Stage != "ready" {
+	if code != 200 || len(kids) != 1 || kids[0].ID != kidA || kids[0].DollName != "小龙" || kids[0].Stage != "ready" || kids[0].WaitingYou != 1 {
 		t.Fatalf("kids = %d %s", code, body)
 	}
 	// 别人家的孩子与不存在的孩子都返回 404。
@@ -265,5 +265,44 @@ func TestAgentControls(t *testing.T) {
 	}
 	if code := g.put(t, "/api/kids/"+string(kidB)+"/friends/"+string(kidA)+"/agent", `{"blocked":true}`); code != http.StatusNotFound {
 		t.Fatalf("other family = %d", code)
+	}
+}
+
+func TestVoiceSettings(t *testing.T) {
+	g := setup(t)
+	ctx := context.Background()
+	path := "/api/kids/" + string(kidA) + "/settings"
+	// kidA 已经起好名字：不能补开。
+	_, body := g.do(t, "GET", path, token)
+	if !strings.Contains(string(body), `"voice_consent":false`) || !strings.Contains(string(body), `"voice_can_enable":false`) {
+		t.Fatalf("default = %s", body)
+	}
+	if code := g.put(t, path, `{"friend_policy":"approve","voice_consent":true}`); code != http.StatusConflict {
+		t.Fatalf("enable after naming = %d", code)
+	}
+	// 绑定时同意并登记过的孩子：关闭即删除。
+	d, _ := g.s.Devices().Get(ctx, kidA)
+	d.VoiceConsent, d.SpeakerID = true, "spk-1"
+	if err := g.s.Devices().Update(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	_, body = g.do(t, "GET", path, token)
+	if !strings.Contains(string(body), `"voice_enrolled":true`) {
+		t.Fatalf("enrolled = %s", body)
+	}
+	if code := g.put(t, path, `{"friend_policy":"approve","voice_consent":false}`); code != http.StatusNoContent {
+		t.Fatalf("revoke = %d", code)
+	}
+	if d, _ := g.s.Devices().Get(ctx, kidA); d.VoiceConsent || d.SpeakerID != "" {
+		t.Fatalf("after revoke = %+v", d)
+	}
+	// 起名前的孩子可以补开。
+	d.Stage, d.VoiceConsent, d.SpeakerID = int(device.StageFresh), false, ""
+	_ = g.s.Devices().Update(ctx, d)
+	if code := g.put(t, path, `{"friend_policy":"approve","voice_consent":true}`); code != http.StatusNoContent {
+		t.Fatalf("enable before naming = %d", code)
+	}
+	if d, _ := g.s.Devices().Get(ctx, kidA); !d.VoiceConsent {
+		t.Fatal("consent not saved")
 	}
 }

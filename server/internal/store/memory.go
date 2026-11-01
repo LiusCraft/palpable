@@ -19,6 +19,7 @@ type Memory struct {
 	keys        map[id.DeviceID]DeviceKey
 	styles      map[string]Style
 	guardians   map[id.GuardianID]Guardian
+	sessions    map[string]Session
 	friendships map[string]Friendship
 	groups      map[id.ChannelID]Group
 	members     map[id.ChannelID]map[id.ParticipantID]Member
@@ -33,6 +34,7 @@ func NewMemory() *Memory {
 		keys:        map[id.DeviceID]DeviceKey{},
 		styles:      map[string]Style{},
 		guardians:   map[id.GuardianID]Guardian{},
+		sessions:    map[string]Session{},
 		friendships: map[string]Friendship{},
 		groups:      map[id.ChannelID]Group{},
 		members:     map[id.ChannelID]map[id.ParticipantID]Member{},
@@ -46,6 +48,7 @@ func (m *Memory) Devices() DeviceRepo         { return memDevices{m} }
 func (m *Memory) DeviceKeys() DeviceKeyRepo   { return memDeviceKeys{m} }
 func (m *Memory) Styles() StyleRepo           { return memStyles{m} }
 func (m *Memory) Guardians() GuardianRepo     { return memGuardians{m} }
+func (m *Memory) Sessions() SessionRepo       { return memSessions{m} }
 func (m *Memory) Friendships() FriendshipRepo { return memFriendships{m} }
 func (m *Memory) Groups() GroupRepo           { return memGroups{m} }
 func (m *Memory) History() HistoryRepo        { return memHistory{m} }
@@ -173,11 +176,117 @@ func (r memGuardians) Get(_ context.Context, g id.GuardianID) (Guardian, error) 
 	return out, nil
 }
 
+func (r memGuardians) ByWxOpenID(_ context.Context, openid string) (Guardian, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if g, ok := r.m.guardianByOpenID(openid); ok {
+		return g, nil
+	}
+	return Guardian{}, fmt.Errorf("guardian by openid: %w", ErrNotFound)
+}
+
+func (m *Memory) guardianByOpenID(openid string) (Guardian, bool) {
+	if openid == "" {
+		return Guardian{}, false
+	}
+	for _, g := range m.guardians {
+		if g.WxOpenID == openid {
+			return g, true
+		}
+	}
+	return Guardian{}, false
+}
+
+func (r memGuardians) Create(_ context.Context, g Guardian) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if _, ok := r.m.guardians[g.ID]; ok {
+		return fmt.Errorf("create guardian %s: %w", g.ID, ErrConflict)
+	}
+	if _, ok := r.m.guardianByOpenID(g.WxOpenID); ok {
+		return fmt.Errorf("create guardian %s: %w", g.ID, ErrConflict)
+	}
+	g.CreatedAt = fromMillis(toMillis(g.CreatedAt))
+	r.m.guardians[g.ID] = g
+	return nil
+}
+
 func (r memGuardians) Put(_ context.Context, g Guardian) error {
 	r.m.mu.Lock()
 	defer r.m.mu.Unlock()
+	if other, ok := r.m.guardianByOpenID(g.WxOpenID); ok && other.ID != g.ID {
+		return fmt.Errorf("put guardian %s: %w", g.ID, ErrConflict)
+	}
+	if old, ok := r.m.guardians[g.ID]; ok {
+		g.CreatedAt = old.CreatedAt
+	} else {
+		g.CreatedAt = fromMillis(toMillis(g.CreatedAt))
+	}
 	r.m.guardians[g.ID] = g
 	return nil
+}
+
+func (r memGuardians) Delete(_ context.Context, g id.GuardianID) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if _, ok := r.m.guardians[g]; !ok {
+		return fmt.Errorf("delete guardian %s: %w", g, ErrNotFound)
+	}
+	delete(r.m.guardians, g)
+	for h, s := range r.m.sessions {
+		if s.Guardian == g {
+			delete(r.m.sessions, h)
+		}
+	}
+	return nil
+}
+
+// ---- session ----
+
+type memSessions struct{ m *Memory }
+
+func (r memSessions) Create(_ context.Context, s Session) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if _, ok := r.m.sessions[s.TokenHash]; ok {
+		return fmt.Errorf("create session: %w", ErrConflict)
+	}
+	s.CreatedAt, s.ExpiresAt = fromMillis(toMillis(s.CreatedAt)), fromMillis(toMillis(s.ExpiresAt))
+	r.m.sessions[s.TokenHash] = s
+	return nil
+}
+
+func (r memSessions) Get(_ context.Context, tokenHash string) (Session, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	s, ok := r.m.sessions[tokenHash]
+	if !ok {
+		return Session{}, fmt.Errorf("get session: %w", ErrNotFound)
+	}
+	return s, nil
+}
+
+func (r memSessions) Delete(_ context.Context, tokenHash string) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if _, ok := r.m.sessions[tokenHash]; !ok {
+		return fmt.Errorf("delete session: %w", ErrNotFound)
+	}
+	delete(r.m.sessions, tokenHash)
+	return nil
+}
+
+func (r memSessions) DeleteExpired(_ context.Context, now time.Time) (int, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	n := 0
+	for h, s := range r.m.sessions {
+		if !s.ExpiresAt.After(now) {
+			delete(r.m.sessions, h)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ---- friendship ----

@@ -135,7 +135,8 @@ AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端
 | `demo.guardian` / `demo.guardian_name` | 演示：新设备自动绑定到这个家长（产品里由家长输入设备播报的绑定码，见 [trust.md](docs/trust.md#3-绑定家长先开通孩子再认主)） |
 | `demo.manual_bind` | 演示绑定流程：不自动绑定，新设备显示并播报 6 位绑定码，在家长端"添加玩偶"输入 |
 | `demo.voice_consent` | 演示：预置监护人对声纹登记的同意 |
-| `demo.parent_token` | 家长端 `/api` 的令牌，代表 `demo.guardian`；为空则不开放家长端 |
+| `wechat.app_id` / `wechat.secret` | 家长端小程序的 AppID 与 AppSecret；都填才开放微信登录（产品环境的家长端鉴权），见 [家长端小程序](docs/modules/miniprogram.md) |
+| `demo.parent_token` | 演示家长端令牌，代表 `demo.guardian`；与微信登录可并存，产品环境留空 |
 | `demo.world` | 开放 `/world` 演示地图；会暴露所有设备位置，默认关闭 |
 
 演示模式下若灵矽暂时不可用（小伙伴听不到），可用页面上的"演示：替小朋友说出名字"与公园里的"加入"按钮代替孩子的口头指令：它们调用 `POST /world/tool`，服务端执行与 AI 调用相同的业务工具，规则照旧由服务端裁决。
@@ -198,7 +199,7 @@ palpable/
 | M2 | 命名认主：设备自动开通、开箱、起名 |
 | M3 | 语音主线：公园频道、陌生人屏蔽、贴近成为好友 |
 | M4 | 群聊、画面分享、家长端、设备工具 |
-| 之后 | 真实硬件、皮套系列、微信小程序、声纹认主、B 端车队版 |
+| 之后 | 真实硬件、皮套系列、声纹认主、B 端车队版 |
 
 完成状态只记在 [docs/tasks.md](docs/tasks.md)。
 

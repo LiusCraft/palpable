@@ -28,7 +28,10 @@ type Client interface {
     // 声纹
     CreateSpeaker(ctx, name) (speakerID, error)
     EnrollVoiceprint(ctx, speakerID, audioURL) error
-    BindSpeakers(ctx, agentID, speakerIDs []string) error  // 可选的声纹认主，黑客松版不调用
+    BindSpeakers(ctx, agentID, speakerIDs []string) error  // 可选的声纹认主，黑客松版不调用（RevokeVoice 解绑时会用）
+    BoundSpeakers(ctx, agentID) ([]string, error)          // GET speaker-config
+    DeleteVoiceprint(ctx, speakerID) error                 // DELETE /v1/speakers/{id}/voiceprint
+    DeleteSpeaker(ctx, speakerID) error                    // DELETE /v1/speakers/{id}；仍被智能体绑定时平台拒绝
     SetOwnerOnly(ctx, agentID, on bool) error              // 同上
     RecentVoiceSamples(ctx, agentID) ([]VoiceSample, error)
     // 聊天记录

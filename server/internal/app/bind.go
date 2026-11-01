@@ -89,12 +89,14 @@ func (a *App) Unbind(ctx context.Context, g id.GuardianID, d id.DeviceID) error 
 			slog.Warn("leave channel on unbind", "device_id", d, "channel", ch.Channel.ID, "error", err)
 		}
 	}
+	if p.SpeakerID != "" {
+		// 恢复出厂要删掉灵矽侧的声纹；灵矽暂时不可用时不拦着家长解绑，记下说话人供人工清理。
+		if err := a.devices.RevokeVoice(ctx, d); err != nil {
+			slog.Error("voiceprint left in linx after unbind", "device_id", d, "speaker_id", p.SpeakerID, "error", err)
+		}
+	}
 	if _, err := a.devices.Unbind(ctx, d, g); err != nil && !errors.Is(err, device.ErrNotFound) {
 		return err
-	}
-	if p.SpeakerID != "" {
-		// 灵矽侧声纹的删除接口待确认（docs/trust.md §7）；先记下，人工清理。
-		slog.Warn("voiceprint left in linx after unbind", "device_id", d)
 	}
 	if sess, ok := a.gw.Session(d); ok {
 		_ = sess.Send(&protocol.BindState{Type: protocol.TypeBindState, Event: "unbound"})

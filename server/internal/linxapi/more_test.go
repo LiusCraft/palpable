@@ -172,3 +172,33 @@ func TestFakeBehaves(t *testing.T) {
 		t.Fatal("unknown session")
 	}
 }
+
+func TestSpeakerCleanupEndpoints(t *testing.T) {
+	calls := make(chan call, 4)
+	c := server(t, map[string]string{
+		"GET /v1/agents/a1/speaker-config":    `{"code":0,"data":{"speaker_ids":["spk1","spk2"],"voice_chat_only_enabled":false}}`,
+		"DELETE /v1/speakers/spk1/voiceprint": `{"code":0,"data":{}}`,
+		"DELETE /v1/speakers/spk1":            `{"code":0,"data":{}}`,
+	}, calls)
+	ctx := context.Background()
+	ids, err := c.BoundSpeakers(ctx, "a1")
+	if err != nil || len(ids) != 2 || ids[0] != "spk1" {
+		t.Fatalf("bound = %v %v", ids, err)
+	}
+	<-calls
+	if err := c.DeleteVoiceprint(ctx, "spk1"); err != nil {
+		t.Fatal(err)
+	}
+	<-calls
+	if err := c.DeleteSpeaker(ctx, "spk1"); err != nil {
+		t.Fatal(err)
+	}
+	<-calls
+
+	f := NewFake()
+	f.Bound["a1"] = []string{"spk1"}
+	var apiErr *APIError
+	if err := f.DeleteSpeaker(ctx, "spk1"); !errors.As(err, &apiErr) {
+		t.Fatalf("fake deleted a bound speaker: %v", err)
+	}
+}

@@ -24,6 +24,7 @@ type Store interface {
 	DeviceKeys() DeviceKeyRepo
 	Styles() StyleRepo
 	Guardians() GuardianRepo
+	Sessions() SessionRepo
 	Friendships() FriendshipRepo
 	Groups() GroupRepo
 	History() HistoryRepo
@@ -85,11 +86,34 @@ type StyleRepo interface {
 type Guardian struct {
 	ID          id.GuardianID
 	DisplayName string
+	WxOpenID    string // 小程序 openid；空表示不是微信账号
+	CreatedAt   time.Time
 }
 
 type GuardianRepo interface {
 	Get(ctx context.Context, g id.GuardianID) (Guardian, error)
-	Put(ctx context.Context, g Guardian) error // 存在则覆盖
+	// ByWxOpenID 按小程序 openid 查家长。
+	ByWxOpenID(ctx context.Context, openid string) (Guardian, error)
+	// Create 在 ID 或 openid 已存在时返回 ErrConflict，供并发首次登录时判重。
+	Create(ctx context.Context, g Guardian) error
+	Put(ctx context.Context, g Guardian) error // 存在则覆盖（CreatedAt 不变）
+	// Delete 在同一事务里删除家长及其全部会话；名下设备由调用方先解绑。
+	Delete(ctx context.Context, g id.GuardianID) error
+}
+
+// Session 是家长端登录会话；只存令牌的哈希。
+type Session struct {
+	TokenHash string
+	Guardian  id.GuardianID
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+type SessionRepo interface {
+	Create(ctx context.Context, s Session) error // 哈希已存在返回 ErrConflict
+	Get(ctx context.Context, tokenHash string) (Session, error)
+	Delete(ctx context.Context, tokenHash string) error            // 不存在返回 ErrNotFound
+	DeleteExpired(ctx context.Context, now time.Time) (int, error) // 返回删除条数
 }
 
 // Friendship 的 A、B 由仓储规范为 A < B，同一对设备只有一条记录；交换 A、B 时 ApprovedA、ApprovedB 随之交换。
