@@ -1,0 +1,19 @@
+{
+  "name": "palpable-parent",
+  "private": true,
+  "description": "可感家长端微信小程序",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "node scripts/lint.mjs",
+    "check": "pnpm typecheck && pnpm lint",
+    "build:npm": "node scripts/pack-npm.mjs"
+  },
+  "dependencies": {
+    "tdesign-miniprogram": "1.17.0"
+  },
+  "devDependencies": {
+    "miniprogram-api-typings": "5.2.3",
+    "miniprogram-ci": "2.1.31",
+    "typescript": "5.9.3"
+  }
+}

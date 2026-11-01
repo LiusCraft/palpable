@@ -1,0 +1,4 @@
+<view class="pa" style="width:{{size}}rpx;height:{{size}}rpx;background:{{tint}}">
+  <image class="pa-img" src="{{image}}" mode="aspectFit" aria-hidden="true" />
+  <view wx:if="{{status}}" class="pa-dot {{status === 'online' ? 'pa-on' : ''}}" />
+</view>

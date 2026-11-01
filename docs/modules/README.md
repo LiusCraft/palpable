@@ -20,12 +20,15 @@
 | | [zone](zone.md) | `internal/zone` | 坐标 → 区域，边界滞回 |
 | | [history](history.md) | `internal/history` | 事件日志与今日回顾 |
 | | [share](share.md) | `internal/share` | 画面分享 |
+| | [account](account.md) | `internal/account` | 家长账号：微信登录、会话令牌、注销 |
 | 基础 | [store](store.md) | `internal/store` | 仓储接口、SQLite 与内存实现 |
 | | [linxapi](linxapi.md) | `internal/linxapi` | 灵矽 REST 薄客户端 |
+| | [wechat](wechat.md) | `internal/wechat` | 微信开放接口薄客户端（登录凭证校验） |
 | | [protocol](protocol.md) | `internal/protocol` | 设备协议 Go 类型与编解码 |
 | | [id](id.md) | `internal/id` | 跨模块标识类型 |
 | | [config](config.md) | `internal/config` | YAML 配置 |
 | 前端 | [web](web.md) | `web/src` | 设备模拟器与演示展示 |
+| | [家长端小程序](miniprogram.md) | `miniprogram/` | 面向真实家长的微信小程序 |
 
 ## 文档模板
 

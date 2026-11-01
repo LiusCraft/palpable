@@ -1,0 +1,26 @@
+{
+  "pages": [
+    "pages/home/index",
+    "pages/bind/index",
+    "pages/kid/index",
+    "pages/me/index",
+    "pages/legal/index"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#FFF8EC",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "可感",
+    "backgroundColor": "#FFF8EC",
+    "backgroundTextStyle": "dark"
+  },
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents",
+  "sitemapLocation": "sitemap.json",
+  "usingComponents": {
+    "t-button": "tdesign-miniprogram/button/button",
+    "t-toast": "tdesign-miniprogram/toast/toast",
+    "t-dialog": "tdesign-miniprogram/dialog/dialog",
+    "t-icon": "tdesign-miniprogram/icon/icon",
+    "t-loading": "tdesign-miniprogram/loading/loading"
+  }
+}

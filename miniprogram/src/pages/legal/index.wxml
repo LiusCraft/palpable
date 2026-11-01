@@ -1,0 +1,11 @@
+<view class="page" wx:if="{{doc}}">
+  <view class="card">
+    <view class="h1">{{doc.title}}</view>
+    <view class="faint updated">更新日期：{{doc.updated}}</view>
+    <view class="para">{{doc.intro}}</view>
+    <view wx:for="{{doc.sections}}" wx:key="heading" class="section">
+      <view class="h3 marker">{{item.heading}}</view>
+      <view wx:for="{{item.paragraphs}}" wx:for-item="p" wx:key="*this" class="para">{{p}}</view>
+    </view>
+  </view>
+</view>

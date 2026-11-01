@@ -1,0 +1,40 @@
+<view class="page">
+  <view class="card profile" bindtap="editName">
+    <plush-avatar skin="bear" size="{{128}}" />
+    <view class="grow">
+      <view class="h2 ellipsis">{{name || t.me.namePlaceholder}}</view>
+      <view class="faint">{{t.me.nameTip}}</view>
+    </view>
+    <t-icon name="edit" size="40rpx" color="#B9A895" />
+  </view>
+
+  <view class="card list">
+    <t-cell title="{{t.me.terms}}" arrow data-doc="terms" bind:click="openDoc" />
+    <t-cell title="{{t.me.privacy}}" arrow data-doc="privacy" bind:click="openDoc" />
+    <t-cell title="{{t.me.children}}" arrow data-doc="children" bind:click="openDoc" />
+    <button class="contact" open-type="contact">
+      <t-cell title="{{t.me.contact}}" arrow />
+    </button>
+  </view>
+
+  <view class="card list">
+    <t-cell title="{{t.me.signOut}}" arrow bind:click="askSignOut" />
+    <t-cell title="{{t.me.deleteAccount}}" t-class-title="danger" arrow bind:click="askDelete" />
+  </view>
+
+  <view class="foot faint">
+    <view>{{company}}</view>
+    <view>{{version}}</view>
+  </view>
+</view>
+
+<t-dialog visible="{{nameDialog}}" title="{{t.me.nameDialog}}" confirm-btn="{{t.common.ok}}" cancel-btn="{{t.common.cancel}}"
+          bind:confirm="saveName" bind:cancel="closeName">
+  <t-input slot="content" class="name-input" value="{{draft}}" maxlength="{{20}}" placeholder="{{t.me.namePlaceholder}}"
+           bind:change="onDraft" borderless clearable />
+</t-dialog>
+
+<t-dialog visible="{{!!confirm}}" title="{{confirmTitle}}" content="{{confirmBody}}"
+          confirm-btn="{{ { content: confirmText, theme: 'danger', variant: 'base' } }}" cancel-btn="{{t.common.cancel}}"
+          bind:confirm="onConfirm" bind:cancel="closeConfirm" />
+<t-toast id="t-toast" />

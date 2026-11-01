@@ -1,0 +1,3 @@
+.updated { margin: 8rpx 0 24rpx; }
+.section { margin-top: 36rpx; }
+.para { margin-top: 16rpx; color: var(--ink-2); font-size: 28rpx; line-height: 1.85; text-align: justify; }

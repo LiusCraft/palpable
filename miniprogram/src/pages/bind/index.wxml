@@ -1,0 +1,40 @@
+<view class="page">
+  <view class="art-wrap">
+    <image class="art" src="/assets/illus/listen.svg" mode="widthFix" aria-hidden="true" />
+  </view>
+
+  <view class="steps">
+    <view wx:for="{{t.steps}}" wx:key="index" class="step">
+      <view class="step-no">{{index + 1}}</view>
+      <text>{{item}}</text>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="h2 heading">{{t.heading}}</view>
+    <code-input error="{{codeError}}" bind:change="onCode" />
+    <view class="muted sub">{{t.sub}}</view>
+  </view>
+
+  <view class="card voice">
+    <view class="row">
+      <view class="grow">
+        <view class="h3">{{t.voiceTitle}}</view>
+        <view class="muted">{{t.voiceBody}}</view>
+      </view>
+      <t-switch value="{{voice}}" bind:change="onVoice" aria-label="{{t.voiceTitle}}" />
+    </view>
+  </view>
+
+  <view class="consent">
+    <t-checkbox checked="{{consent}}" bind:change="onConsent" icon="circle" borderless>
+      <view slot="content" class="consent-text">
+        {{t.consentMain}}<text class="link" catchtap="openDoc" data-doc="terms">《用户协议》</text><text class="link" catchtap="openDoc" data-doc="privacy">《隐私政策》</text><text class="link" catchtap="openDoc" data-doc="children">《儿童个人信息保护规则》</text>{{t.consentTail}}
+      </view>
+    </t-checkbox>
+  </view>
+
+  <t-button theme="primary" size="large" block t-class="btn-chunky" loading="{{submitting}}"
+            disabled="{{!complete || !consent}}" bind:tap="submit">{{submitting ? t.submitting : t.submit}}</t-button>
+</view>
+<t-toast id="t-toast" />

@@ -1,0 +1,8 @@
+<view class="ci" bindtap="focus" aria-role="textbox" aria-label="6 位绑定码">
+  <view wx:for="{{cells}}" wx:key="index"
+        class="ci-cell {{item ? 'ci-filled' : ''}} {{focused && index === value.length ? 'ci-active' : ''}} {{error ? 'ci-error' : ''}}">
+    <text>{{item}}</text>
+  </view>
+  <input class="ci-input" type="number" maxlength="6" value="{{value}}" focus="{{focused}}"
+         bindinput="onInput" bindblur="onBlur" adjust-position="{{true}}" confirm-type="done" />
+</view>

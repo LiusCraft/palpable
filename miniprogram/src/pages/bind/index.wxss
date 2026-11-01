@@ -1,0 +1,31 @@
+.art-wrap { display: flex; justify-content: center; margin: 0 0 8rpx; }
+.art { width: 520rpx; }
+.steps { display: flex; justify-content: space-between; gap: 12rpx; margin: 0 0 32rpx; }
+.step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10rpx;
+  font-size: 24rpx;
+  color: var(--ink-2);
+  text-align: center;
+}
+.step-no {
+  width: 52rpx;
+  height: 52rpx;
+  border-radius: 50%;
+  background: var(--butter);
+  color: var(--ink);
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 4rpx solid var(--ink);
+}
+.heading { margin-bottom: 28rpx; }
+.sub { margin-top: 28rpx; line-height: 1.7; }
+.voice .grow { padding-right: 24rpx; }
+.voice .muted { margin-top: 6rpx; line-height: 1.6; }
+.consent { margin: 8rpx 0 40rpx; }
+.consent-text { font-size: 26rpx; line-height: 1.7; color: var(--ink-2); }

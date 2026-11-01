@@ -1,0 +1,9 @@
+# 微信开发者工具的"构建 npm"不认 pnpm 的符号链接，用平铺的 node_modules。
+nodeLinker: hoisted
+# miniprogram-ci 的依赖带原生构建脚本，打包 npm 用不到，不执行。
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false
+  core-js: false
+  less: false
+  protobufjs: false

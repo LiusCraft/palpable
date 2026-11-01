@@ -1,0 +1,48 @@
+.hero {
+  position: relative;
+  background: linear-gradient(180deg, #ffe3c9 0%, #fff1de 60%, var(--cream) 100%);
+  padding-bottom: 24rpx;
+  overflow: hidden;
+}
+.hero-sky { position: absolute; left: 0; top: 0; width: 100%; opacity: 0.95; }
+.nav { position: relative; display: flex; align-items: center; padding: 0 32rpx; }
+.nav-me {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 22rpx 8rpx 14rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.85);
+  border: 3rpx solid var(--line);
+  font-size: 26rpx;
+  font-weight: 700;
+}
+.hello { position: relative; padding: 48rpx 40rpx 8rpx; }
+.hello-line { color: var(--ink-2); font-size: 28rpx; margin-bottom: 4rpx; }
+
+.body { padding-top: 8rpx; }
+
+.welcome { text-align: center; padding: 40rpx 40rpx 48rpx; }
+.welcome-art { width: 440rpx; margin: -8rpx auto 8rpx; display: block; }
+.welcome-text { margin: 16rpx 8rpx 44rpx; line-height: 1.7; }
+
+.fail-art { width: 140rpx; height: 140rpx; }
+
+.kid { display: flex; align-items: center; gap: 28rpx; padding: 28rpx 28rpx 28rpx 24rpx; }
+.kid:active { transform: translateY(4rpx); box-shadow: 0 6rpx 0 var(--shadow); }
+.kid-info { display: flex; flex-direction: column; gap: 6rpx; }
+.kid-state { margin-left: 16rpx; flex-shrink: 0; }
+.kid-badge { align-self: flex-start; margin-top: 6rpx; }
+
+.add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  height: 120rpx;
+  border: 4rpx dashed #e5cfae;
+  border-radius: 40rpx;
+  color: var(--ink-2);
+  font-weight: 700;
+}
+.add:active { background: #fff3e2; }

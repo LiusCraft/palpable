@@ -1,0 +1,50 @@
+{
+  "description": "可感家长端",
+  "projectname": "palpable-parent",
+  "appid": "wx87ccf6787fbc3ce0",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "src/",
+  "srcMiniprogramRoot": "src/",
+  "libVersion": "3.4.0",
+  "setting": {
+    "useCompilerPlugins": [
+      "typescript"
+    ],
+    "urlCheck": true,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "packNpmManually": true,
+    "packNpmRelationList": [
+      {
+        "packageJsonPath": "./package.json",
+        "miniprogramNpmDistDir": "./src/"
+      }
+    ],
+    "ignoreUploadUnusedFiles": true,
+    "uploadWithSourceMap": true,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "condition": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "editorSetting": {
+    "tabIndent": "insertSpaces",
+    "tabSize": 2
+  },
+  "simulatorPluginLibVersion": {},
+  "isGameTourist": false
+}
