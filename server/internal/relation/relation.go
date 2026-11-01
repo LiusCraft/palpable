@@ -325,3 +325,17 @@ func (r *Relations) emit(e Event) {
 func fromRecord(f store.Friendship) Friendship {
 	return Friendship{ID: f.ID, A: f.A, B: f.B, Status: Status(f.Status), ConfirmedBy: f.ConfirmedBy, CreatedAt: f.CreatedAt}
 }
+
+// RemoveAll 解除设备的全部好友与请求，设备解绑（恢复出厂）时用；每一条都发 Removed，voice 据此中断转发。
+func (r *Relations) RemoveAll(ctx context.Context, d id.DeviceID) error {
+	fs, err := r.Friends(ctx, d)
+	if err != nil {
+		return err
+	}
+	for _, f := range fs {
+		if err := r.Remove(ctx, f.A, f.B); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}

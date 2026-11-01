@@ -279,6 +279,9 @@ func (s *Session) SendAudio(frame []byte) error {
 	return s.write(websocket.BinaryMessage, frame)
 }
 
+// Close 断开设备；读循环随之退出并走正常的清理。设备会重连，用于解绑后让设备回到出厂流程。
+func (s *Session) Close() { _ = s.ws.Close() }
+
 // kick 通知设备被新连接顶替并断开；读循环随之退出并走正常的清理。
 func (s *Session) kick() {
 	_ = s.Send(errorMsg(protocol.CodeUnauthorized, "replaced by a new connection"))

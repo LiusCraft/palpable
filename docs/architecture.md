@@ -117,12 +117,13 @@
 
 ### 5.1 设备上线、开通与起名
 
-1. 设备连上 `/ws`，发 `hello(MAC, skin, capabilities)`；`gateway` 校验后回 `hello.ack`，调用 `app.OnConnect`。
-2. `app` 调 `device.Ensure`。失败 → 下发 `error`，跳过后续步骤，设备仍可对讲。
-3. `app` 调 `bridge/linx.Open`：以该 MAC 和档案里的 `agent_id`（新设备是引导智能体）拨号灵矽，`hello.agent_params` 注入已知的名字与"是否做声音登记"；就绪后向设备下发 `audio.downlink`。
-4. `stage=fresh` 时，`app` 调 `Say` 让引导智能体欢迎并请孩子起名。孩子说出名字后，AI 调用 `self.profile.set_names` → `device.SetNames` → `stage=named`，`device` 发 `Named` 事件。
-5. （可选）有监护人同意时，引导智能体请孩子跟着说一句话，再调 `self.voiceprint.enroll` → `device.EnrollVoice`；失败只记日志，不影响下一步。
-6. `app` 收到 `Named`，等 AI 说完（`OnAIState` 回到 idle）后调 `device.Handoff`：切到风格智能体、写记忆焦点、`stage=ready`；再让 `bridge/linx` 关闭旧会话并以新 `agent_id` 重新 `Open`，由新智能体用孩子起的名字做第一句问候。交棒失败则保持 `stage=named`，下次上线重试。
+1. 设备连上 `/ws`，发 `hello(MAC, skin, capabilities, pubkey)`；`gateway` 发挑战、验签后回 `hello.ack`，调用 `app.OnConnect`（[trust.md §2](trust.md#2-设备身份与认证)）。
+2. `app` 调 `device.Ensure`。失败 → 下发 `error`，跳过后续步骤。
+3. 设备还没绑定家长 → 下发 `bind.code`，设备播报 6 位码；家长在家长端输入并同意后，`device.Bound` 事件让流程继续。绑定前设备的一切上行都被丢弃（[trust.md §3](trust.md#3-绑定家长先开通孩子再认主)）。
+4. `app` 调 `bridge/linx.Open`：以该 MAC 和档案里的 `agent_id`（新设备是引导智能体）拨号灵矽，`hello.agent_params` 注入已知的名字与"是否做声音登记"；就绪后向设备下发 `audio.downlink`。
+5. `stage=fresh` 时，`app` 调 `Say` 让引导智能体欢迎并请孩子起名。孩子说出名字后，AI 调用 `self.profile.set_names` → `device.SetNames` → `stage=named`，`device` 发 `Named` 事件。
+6. （可选）有监护人同意时，引导智能体请孩子跟着说一句话，再调 `self.voiceprint.enroll` → `device.EnrollVoice`；失败只记日志，不影响下一步。
+7. `app` 收到 `Named`，等 AI 说完（`OnAIState` 回到 idle）后调 `device.Handoff`：切到风格智能体、写记忆焦点、`stage=ready`；再让 `bridge/linx` 关闭旧会话并以新 `agent_id` 重新 `Open`，由新智能体用孩子起的名字做第一句问候。交棒失败则保持 `stage=named`，下次上线重试。
 
 ### 5.2 对 AI 说话
 
@@ -244,8 +245,6 @@ Web 模拟器与固件各自实现下面七项，其余全在服务端。
 | 好友由一方家长确认，还是双方家长都确认？ | `relation` 状态机、家长端 | 演示：任一方确认即生效 |
 | 家长端是否进入演示？AGENTS.md 主线不含，产品文档曾列入 | 任务排期 | 主线之外的加演项，排在 M4 |
 | 灵矽聊天记录能否按设备筛选？风格智能体被多台设备共用 | `history` 会不会混入别的孩子的对话 | 消息接口带 `macAddress`：只展示标着本机 MAC 的消息，没有 MAC 的不展示 |
-| 设备如何绑定家长？ | `device.Profile.Guardian`、家长端 | 演示：启动时预置；产品：家长端扫码绑定 |
-| 声纹登记的监护人同意在哪一步取得？新设备开箱时家长可能还没绑定 | 引导流程是否包含声音登记 | 演示：预置同意标记；产品：绑定家长时一并取得，未同意则引导期跳过声音登记，之后可补登记 |
 | 引导期的声音样本从哪里来？灵矽的声纹登记只收 `audio_url`，引导智能体被所有新设备共用，聊天记录又不能确认能按设备筛选 | 声音登记能否做 | 联调验证；筛不出就不做声音登记，不改为服务端暂存音频 |
 
 ## 12. 风险

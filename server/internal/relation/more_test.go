@@ -101,3 +101,28 @@ func TestStoreErrorsPropagate(t *testing.T) {
 		t.Fatalf("propose: %v", err)
 	}
 }
+
+func TestRemoveAll(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx, store.NewMemory().Friendships())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetAutoConfirm(true)
+	for _, p := range []id.DeviceID{"b", "c"} {
+		if err := r.propose(ctx, "a", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.RemoveAll(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []id.ParticipantID{id.Device("b"), id.Device("c")} {
+		if ok, _ := r.AreFriends(ctx, id.Device("a"), p); ok {
+			t.Fatalf("still friends with %s", p)
+		}
+	}
+	if fs, _ := r.Friends(ctx, "a"); len(fs) != 0 {
+		t.Fatalf("left %v", fs)
+	}
+}

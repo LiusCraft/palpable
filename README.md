@@ -132,7 +132,8 @@ AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端
 | `linx.api_base` | 灵矽 REST 地址，默认 `https://xrobo.qiniu.com` |
 | `linx.voiceprint_base` | 声纹服务地址（演示环境） |
 | `linx.ota_url` | 灵矽 OTA 地址，用于激活预注册的设备 |
-| `demo.guardian` / `demo.guardian_name` | 演示：新设备自动绑定到这个家长 |
+| `demo.guardian` / `demo.guardian_name` | 演示：新设备自动绑定到这个家长（产品里由家长输入设备播报的绑定码，见 [trust.md](docs/trust.md#3-绑定家长先开通孩子再认主)） |
+| `demo.manual_bind` | 演示绑定流程：不自动绑定，新设备显示并播报 6 位绑定码，在家长端"添加玩偶"输入 |
 | `demo.voice_consent` | 演示：预置监护人对声纹登记的同意 |
 | `demo.parent_token` | 家长端 `/api` 的令牌，代表 `demo.guardian`；为空则不开放家长端 |
 | `demo.world` | 开放 `/world` 演示地图；会暴露所有设备位置，默认关闭 |

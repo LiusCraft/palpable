@@ -70,6 +70,13 @@ export function Hud({ device }: { device: VirtualDevice }) {
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-4 flex flex-col items-center gap-2 px-4">
+        {s.bindCode && (
+          <div className="pointer-events-auto rounded-2xl bg-white/95 px-5 py-3 text-center shadow-lg ring-1 ring-amber-200">
+            <div className="text-sm font-medium text-[#1d3557]">{copy.bind.title}</div>
+            <div className="my-1 font-mono text-3xl font-bold tracking-[0.3em] text-amber-600">{s.bindCode}</div>
+            <div className="text-xs text-slate-500">{copy.bind.hint}</div>
+          </div>
+        )}
         {s.lastError && (
           <p className="pointer-events-auto flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600 shadow ring-1 ring-rose-100">
             {s.lastError}

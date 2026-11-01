@@ -32,6 +32,8 @@ type Demo struct {
 	VoiceConsent bool   `yaml:"voice_consent"` // 预置声纹登记的同意，默认开启；设为 false 则引导期不做声音登记
 	ParentToken  string `yaml:"parent_token"`  // 家长端令牌，代表 Guardian；空则不开放 /api
 	World        bool   `yaml:"world"`         // 开放 /world 演示地图；会暴露所有设备位置，默认关闭
+	// 设为 true 时不自动绑定 Guardian，新设备播报绑定码，由家长端输入完成绑定（演示绑定流程用）。
+	ManualBind bool `yaml:"manual_bind"`
 	// 好友默认贴近即生效、家长收到通知；设为 true 则每个新好友都要家长先确认。
 	FriendNeedsApproval bool `yaml:"friend_needs_approval"`
 }

@@ -18,8 +18,10 @@
 | `DELETE /api/kids/{id}/friends/{fid}` | 解除好友或拒绝请求 | `relation.Remove` |
 | `GET /api/kids/{id}/groups` | 所在频道与群 | `channel.List` |
 | `GET /api/kids/{id}/digest?date=today` | 今日回顾；只支持 today | `history.Today` |
+| `POST /api/bindings` | 输入设备播报的绑定码完成绑定；`ai_companion` 必须为 true，`voice_consent` 是声纹的单独同意。错码 400，猜太多 429，已被绑定 409 | `Bindings.Claim` |
+| `DELETE /api/kids/{id}` | 解绑并恢复出厂（删好友、群、历史） | `Bindings.Unbind` |
 
-端口（由 `app` 注入）：`Auth func(token) (GuardianID, bool)`、`Online func(DeviceID) bool`，以及上表对应的各模块窄接口。
+端口（由 `app` 注入）：`Auth func(token) (GuardianID, bool)`、`Online func(DeviceID) bool`、`Bindings`（`EnableBinding` 注入；解绑要同时清理好友与频道，所以由 `app` 实现），以及上表对应的各模块窄接口。
 
 ## 数据结构
 

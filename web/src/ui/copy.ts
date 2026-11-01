@@ -145,6 +145,14 @@ export const copy = {
 
   friend: { someone: '一位好朋友' },
 
+  bind: {
+    title: '请爸爸妈妈来帮忙',
+    hint: '在家长端输入这 6 个数字，小伙伴就能醒来啦',
+    announce: (code: string) => `你好呀，请爸爸妈妈在手机上输入：${code.split('').join('，')}`,
+    bound: '爸爸妈妈同意啦！',
+    unbound: '小伙伴回到出厂状态啦',
+  },
+
   device: {
     errorUnsupported: '当前浏览器不支持 WebCodecs，请使用 Chrome / Edge',
     errorMic: (msg: string) => `无法打开麦克风：${msg}`,
@@ -170,6 +178,15 @@ export const copy = {
     noChats: '今天还没有聊天',
     controls: ['屏蔽好友', '解除好友', '对话摘要', '分享记录'],
     noKids: '名下还没有设备，打开玩偶上线后会自动出现',
+    bindTitle: '添加玩偶',
+    bindHint: '输入玩偶播报的 6 位数字',
+    bindConsent: '我是孩子的监护人，同意孩子使用 AI 小伙伴陪伴服务',
+    bindVoice: '（可选）同意登记孩子的声音，让小伙伴认得他',
+    bindSubmit: '绑定',
+    bindFailed: (status: string) =>
+      status === '429' ? '输错太多次，请 10 分钟后再试' : status === '409' ? '这个玩偶已经被绑定了' : '绑定码不对或已过期',
+    unbind: '解绑并恢复出厂',
+    unbindConfirm: '解绑后，这个玩偶的名字、好友和记录都会删除，确定吗？',
     unit: { times: '次', people: '人' },
   },
 

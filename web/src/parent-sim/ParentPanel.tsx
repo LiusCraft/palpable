@@ -96,6 +96,7 @@ export function ParentPanel() {
           {kids.length === 0 && <p className="text-xs text-slate-400">{copy.parent.noKids}</p>}
         </div>
         {error && <p className="mt-3 text-xs text-rose-500">{error}</p>}
+        <BindForm onBound={() => void refresh()} />
       </aside>
 
       {/* 好友列表 */}
@@ -183,6 +184,19 @@ export function ParentPanel() {
               </li>
             ))}
             {chats === 0 && <li className="text-xs text-slate-400">{copy.parent.noChats}</li>}
+            {current && (
+              <li className="pt-3">
+                <Button
+                  tone="ghost"
+                  onClick={() => {
+                    if (!window.confirm(copy.parent.unbindConfirm)) return
+                    void act(() => parentApi.unbind(current)).then(() => setKid(''))
+                  }}
+                >
+                  {copy.parent.unbind}
+                </Button>
+              </li>
+            )}
           </ul>
         ) : (
           <ul className="space-y-1 text-sm text-slate-600">
@@ -197,6 +211,51 @@ export function ParentPanel() {
           </ul>
         )}
       </section>
+    </div>
+  )
+}
+
+/** 添加玩偶：输入设备播报的绑定码，并勾选监护人同意（声音登记是单独的可选项）。见 docs/trust.md §3。 */
+function BindForm({ onBound }: { onBound: () => void }) {
+  const [code, setCode] = useState('')
+  const [consent, setConsent] = useState(false)
+  const [voice, setVoice] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const submit = async () => {
+    try {
+      await parentApi.bind(code, voice)
+      setCode('')
+      setMsg('')
+      onBound()
+    } catch (e) {
+      setMsg(copy.parent.bindFailed(e instanceof Error ? e.message : ''))
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
+      <div className="font-semibold text-[#1d3557]">{copy.parent.bindTitle}</div>
+      <input
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        inputMode="numeric"
+        placeholder={copy.parent.bindHint}
+        aria-label={copy.parent.bindHint}
+        className="w-full rounded-lg px-2 py-1.5 tracking-widest ring-1 ring-slate-200"
+      />
+      <label className="flex items-start gap-1.5">
+        <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+        {copy.parent.bindConsent}
+      </label>
+      <label className="flex items-start gap-1.5">
+        <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} />
+        {copy.parent.bindVoice}
+      </label>
+      <Button onClick={() => void submit()} disabled={code.length !== 6 || !consent}>
+        {copy.parent.bindSubmit}
+      </Button>
+      {msg && <p className="text-rose-500">{msg}</p>}
     </div>
   )
 }

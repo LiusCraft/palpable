@@ -38,8 +38,12 @@ export interface Digest {
   chats: { role: 'user' | 'assistant'; text: string; at: string }[]
 }
 
-async function call<T>(method: string, path: string): Promise<T> {
-  const resp = await fetch(path, { method, headers: { Authorization: `Bearer ${token}` } })
+async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const resp = await fetch(path, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  })
   if (!resp.ok) throw new Error(`${resp.status}`)
   return resp.status === 204 ? (undefined as T) : ((await resp.json()) as T)
 }
@@ -51,4 +55,7 @@ export const parentApi = {
   digest: (kid: string) => call<Digest>('GET', `/api/kids/${kid}/digest?date=today`),
   confirm: (requestId: string) => call<void>('POST', `/api/friend-requests/${requestId}/confirm`),
   remove: (kid: string, friend: string) => call<void>('DELETE', `/api/kids/${kid}/friends/${friend}`),
+  bind: (code: string, voiceConsent: boolean) =>
+    call<{ id: string }>('POST', '/api/bindings', { code, ai_companion: true, voice_consent: voiceConsent }),
+  unbind: (kid: string) => call<void>('DELETE', `/api/kids/${kid}`),
 }

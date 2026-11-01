@@ -56,6 +56,7 @@ type App struct {
 	store   store.Store
 	catalog *device.Catalog
 	devices *device.Devices
+	binder  *device.Binder
 	ai      ai // 未配置灵矽时为 nil
 	rel     *relation.Relations
 	chans   *channel.Channels
@@ -65,6 +66,11 @@ type App struct {
 	history *history.History
 	world   *world.World // 仅演示模式
 	gw      *gateway.Gateway
+
+	// requireBind 为 true 时未绑定家长的设备不提供任何服务，见 docs/trust.md §3。
+	requireBind bool
+	active      sync.Map // id.DeviceID → struct{}：已绑定、正在服务的在线设备
+	bindWait    sync.Map // id.DeviceID → chan struct{}：等待绑定的在线设备，绑定时关闭
 
 	speaking sync.Map // id.DeviceID → bool：AI 是否正在说话，交棒前等它说完
 	enrolled sync.Map // id.DeviceID → chan struct{}：声纹登记尝试结束时关闭
@@ -80,6 +86,8 @@ type deps struct {
 	demo  config.Demo
 	// enrollment 为空时不认证，测试默认如此；配置文件默认 open。
 	enrollment device.Enrollment
+	// requireBind 在产品里总为 true；测试默认 false，只有绑定相关的用例打开。
+	requireBind bool
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -87,7 +95,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := deps{store: db, demo: cfg.Demo, enrollment: device.Enrollment(cfg.Auth.Enrollment)}
+	d := deps{store: db, demo: cfg.Demo, enrollment: device.Enrollment(cfg.Auth.Enrollment), requireBind: true}
 	if cfg.Linx.Enabled() {
 		d.ai = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token})
 		d.linx = linxapi.New(cfg.Linx.APIBase, cfg.Linx.Token).WithOTA(cfg.Linx.OTAURL)
@@ -120,7 +128,8 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	}
 	catalog := device.NewCatalog(d.store.Styles(), d.linx)
 	a := &App{demo: d.demo, store: d.store, catalog: catalog, devices: device.New(d.store.Devices(), catalog, d.linx),
-		ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park)}
+		ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park), requireBind: d.requireBind}
+	a.binder = device.NewBinder(a.devices)
 	var aiPort voice.AI = noAI{}
 	if d.ai != nil {
 		aiPort = d.ai
@@ -177,6 +186,7 @@ func (a *App) Start(ctx context.Context) {
 	go a.voice.Run(ctx)
 	go a.voiceEvents(ctx)
 	go a.deviceEvents(ctx)
+	go a.bindEvents(ctx)
 	go a.sweepGroups(ctx)
 }
 
@@ -191,8 +201,10 @@ func (a *App) Handler() http.Handler {
 	}
 	if a.demo.ParentToken != "" && a.demo.Guardian != "" {
 		online := func(d id.DeviceID) bool { _, ok := a.gw.Session(d); return ok }
-		mux.Handle("/api/", parentapi.New(parentapi.FixedToken(a.demo.ParentToken, id.GuardianID(a.demo.Guardian)),
-			a.devices, a.rel, a.chans, a.history, online))
+		api := parentapi.New(parentapi.FixedToken(a.demo.ParentToken, id.GuardianID(a.demo.Guardian)),
+			a.devices, a.rel, a.chans, a.history, online)
+		api.EnableBinding(a)
+		mux.Handle("/api/", api)
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -245,6 +257,18 @@ func (a *App) connect(s *gateway.Session) {
 		return
 	}
 	p = a.applyDemo(ctx, p)
+	if a.requireBind && p.Guardian == "" {
+		a.awaitBind(s)
+		return
+	}
+	a.serve(s, p)
+}
+
+// serve 让已绑定的设备开始工作：接上 AI，新设备由小可欢迎。
+func (a *App) serve(s *gateway.Session, p device.Profile) {
+	ctx := s.Context()
+	d := s.DeviceID()
+	a.active.Store(d, struct{}{})
 	a.publish(world.Event{Kind: "device", Device: d, Name: p.DollName, Skin: p.Skin})
 	if p.Stage == device.StageNamed {
 		// 上次起好名字但交棒没完成：重试，不让孩子重新起名。
@@ -270,7 +294,7 @@ func (a *App) connect(s *gateway.Session) {
 
 // applyDemo 演示环境里新设备自动绑定预置家长与同意标记；产品里由家长端完成。
 func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
-	if a.demo.Guardian == "" || p.Guardian != "" {
+	if a.demo.Guardian == "" || a.demo.ManualBind || p.Guardian != "" {
 		return p
 	}
 	g := id.GuardianID(a.demo.Guardian)
@@ -314,6 +338,9 @@ func (a *App) ensureCatalog(ctx context.Context) {
 }
 
 func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
+	if !a.serving(s.DeviceID()) {
+		return // 未绑定：不进 AI、不进频道、不交友、不记位置
+	}
 	switch m := msg.(type) {
 	case *protocol.MicState:
 		a.voice.OnMicState(s.DeviceID(), m.State == "start")
@@ -340,10 +367,27 @@ func (a *App) OnMessage(s *gateway.Session, msg protocol.Message) {
 }
 
 func (a *App) OnAudio(s *gateway.Session, frame []byte) {
+	if !a.serving(s.DeviceID()) {
+		return
+	}
 	a.voice.OnMicFrame(s.DeviceID(), frame)
 }
 
+// serving 是热路径：sync.Map 读不加锁。
+func (a *App) serving(d id.DeviceID) bool {
+	if !a.requireBind {
+		return true
+	}
+	_, ok := a.active.Load(d)
+	return ok
+}
+
 func (a *App) OnDisconnect(s *gateway.Session) {
+	a.active.Delete(s.DeviceID())
+	a.binder.Revoke(s.DeviceID())
+	if ch, ok := a.bindWait.LoadAndDelete(s.DeviceID()); ok {
+		close(ch.(chan struct{}))
+	}
 	a.voice.OnDisconnect(s.DeviceID())
 	a.mcp.Forget(s.DeviceID())
 	a.speaking.Delete(s.DeviceID())

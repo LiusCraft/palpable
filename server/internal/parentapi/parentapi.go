@@ -62,6 +62,7 @@ type API struct {
 	channels  Channels
 	history   History
 	online    Online
+	bindings  Bindings // nil 时不开放绑定接口
 	mux       *http.ServeMux
 }
 

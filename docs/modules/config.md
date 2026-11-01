@@ -36,6 +36,7 @@ type Demo struct {
     ParentToken  string             // 家长端令牌；空则不开放 /api
     World        bool               // 开放 /world；会暴露所有设备位置，默认关闭
     FriendNeedsApproval bool        // true：每个新好友都先经家长确认
+    ManualBind   bool               // true：不自动绑定 Guardian，演示绑定码流程
 }
 func (l Linx) Enabled() bool        // WSURL != ""
 ```

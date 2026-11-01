@@ -39,6 +39,8 @@ export interface DeviceView {
   toast: { text: string; at: number } | null
   shakeAt: number
   lastError: string | null
+  /** 还没绑定家长时服务端下发的绑定码；真实设备逐位播报，这里同时显示在画面上。 */
+  bindCode: string | null
 }
 
 const CAPABILITIES: Capability[] = ['mic', 'speaker', 'light', 'haptic', 'proximity', 'location', 'wake', 'mcp']
@@ -74,6 +76,7 @@ export class VirtualDevice {
       toast: null,
       shakeAt: 0,
       lastError: null,
+      bindCode: null,
     }))
   }
 
@@ -157,6 +160,14 @@ export class VirtualDevice {
         break
       case 'hello.ack':
         this.set({ link: 'online', sessionId: msg.session_id })
+        break
+      case 'bind.code':
+        this.set({ bindCode: msg.code })
+        announce(copy.bind.announce(msg.code))
+        break
+      case 'bind.state':
+        this.set({ bindCode: null })
+        this.toast(msg.event === 'bound' ? copy.bind.bound : copy.bind.unbound)
         break
       case 'audio.downlink':
         this.player.configure(msg.sample_rate)
@@ -331,5 +342,16 @@ export class VirtualDevice {
   reportProximity(peers: { deviceId: string; strength: number }[]): void {
     const list = peers.slice(0, 16).map((p) => ({ device_id: p.deviceId, strength: Math.round(p.strength * 100) / 100 }))
     this.send({ type: 'proximity', peers: list as Proximity['peers'] })
+  }
+}
+
+/** 播报绑定码：真实设备用本地数字提示音，模拟器用浏览器朗读；不经过 AI（绑定前没有监护人同意）。 */
+function announce(text: string): void {
+  try {
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'zh-CN'
+    speechSynthesis.speak(u)
+  } catch {
+    // 浏览器不支持朗读时只显示在画面上
   }
 }

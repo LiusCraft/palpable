@@ -18,12 +18,28 @@ func (d *Devices) Profile(ctx, id) (Profile, error)                      // 不�
 func (d *Devices) SetNames(ctx, id, doll, kid string) error              // fresh → named，发 Named 事件
 func (d *Devices) Handoff(ctx, id) (Profile, error)                      // 幂等；named → ready
 func (d *Devices) EnrollVoice(ctx, id) error                             // ErrNoConsent / ErrNotOnboarding / ErrNoSample
-func (d *Devices) Bind(ctx, id, GuardianID) error
+func (d *Devices) Bind(ctx, id, GuardianID) error                        // 演示预置绑定
+func (d *Devices) Claim(ctx, id, GuardianID, voiceConsent bool) error    // 已绑定 → ErrAlreadyBound（激活锁）
+func (d *Devices) Unbind(ctx, id, GuardianID) (Profile, error)           // 非本人 → ErrNotYourDevice；删档案
 func (d *Devices) SetVoiceConsent(ctx, id, on bool) error
 func (d *Devices) ByGuardian(ctx, GuardianID) ([]Profile, error)
 func (d *Devices) Delete(ctx, id) error                                  // 同一事务删好友、群成员、历史
 func (d *Devices) Subscribe() <-chan Named                               // {Device, DollName, KidName}
 func (d *Devices) EnrollAttempts() <-chan id.DeviceID                    // 每次声纹登记尝试结束（成败都发）
+
+// 绑定码：只在内存，设备掉线即作废。规则见 docs/trust.md §3
+type Binder struct{}
+func (b *Binder) Issue(id) (code string, ttl time.Duration)              // 6 位，10 分钟；旧码作废
+func (b *Binder) Revoke(id)
+func (b *Binder) Claim(ctx, GuardianID, code, voiceConsent bool) (id, error)  // ErrBadBindCode / ErrTooManyTries（同一家长 10 分钟 5 次）
+func (b *Binder) Subscribe() <-chan Bound                                // {Device, Guardian}
+
+// 设备认证：服务端只存公钥。规则见 docs/trust.md §2
+type Authenticator struct{}
+func NewAuthenticator(store.DeviceKeyRepo, Enrollment) (*Authenticator, error)  // open | manifest | off
+func (a *Authenticator) Verify(ctx, id, pubkey []byte, nonce string, sig []byte) error
+func (a *Authenticator) Enroll(ctx, id, pubkey []byte) error             // 导入出厂清单
+func SignedMessage(id, nonce string) []byte                              // "palpable-auth-v1\n" + id + "\n" + nonce
 
 type Catalog struct{ /* 引导智能体 + 按 skin 的风格智能体 */ }
 func (c *Catalog) EnsureAll(ctx) error     // 启动时确保灵矽侧的智能体存在并同步提示词
