@@ -74,8 +74,11 @@ type Profile struct {
 	VoiceConsent bool
 	SpeakerID    string
 	FriendPolicy FriendPolicy
-	Stage        Stage
-	CreatedAt    time.Time
+	// AgentOff：自家家长不允许自家小伙伴在频道里发言。BlockedAgents：自家家长屏蔽的别家小伙伴（主人设备）。
+	AgentOff      bool
+	BlockedAgents []id.DeviceID
+	Stage         Stage
+	CreatedAt     time.Time
 }
 
 type Named struct {
@@ -461,11 +464,11 @@ func (d *Devices) Delete(ctx context.Context, dev id.DeviceID) error {
 func fromRecord(r store.Device) Profile {
 	return Profile{ID: r.ID, Skin: r.Skin, StyleID: r.StyleID, AgentID: r.AgentID, DollName: r.DollName, KidName: r.KidName,
 		Guardian: r.Guardian, VoiceConsent: r.VoiceConsent, SpeakerID: r.SpeakerID, FriendPolicy: FriendPolicy(r.FriendPolicy),
-		Stage: Stage(r.Stage), CreatedAt: r.CreatedAt}
+		AgentOff: r.AgentOff, BlockedAgents: r.BlockedAgents, Stage: Stage(r.Stage), CreatedAt: r.CreatedAt}
 }
 
 func toRecord(p Profile) store.Device {
 	return store.Device{ID: p.ID, Skin: p.Skin, StyleID: p.StyleID, AgentID: p.AgentID, DollName: p.DollName, KidName: p.KidName,
 		Stage: int(p.Stage), Guardian: p.Guardian, VoiceConsent: p.VoiceConsent, SpeakerID: p.SpeakerID,
-		FriendPolicy: int(p.FriendPolicy), CreatedAt: p.CreatedAt}
+		FriendPolicy: int(p.FriendPolicy), AgentOff: p.AgentOff, BlockedAgents: p.BlockedAgents, CreatedAt: p.CreatedAt}
 }

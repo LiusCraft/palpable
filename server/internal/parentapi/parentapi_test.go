@@ -235,3 +235,35 @@ func TestFriendPolicySettings(t *testing.T) {
 		t.Fatalf("other family's kid = %d", code)
 	}
 }
+
+func TestAgentControls(t *testing.T) {
+	g := setup(t)
+	path := "/api/kids/" + string(kidA) + "/settings"
+	_, body := g.do(t, "GET", path, token)
+	if !strings.Contains(string(body), `"agent_in_channel":true`) {
+		t.Fatalf("default = %s", body)
+	}
+	if code := g.put(t, path, `{"friend_policy":"approve","agent_in_channel":false}`); code != http.StatusNoContent {
+		t.Fatalf("put = %d", code)
+	}
+	_, body = g.do(t, "GET", path, token)
+	if !strings.Contains(string(body), `"agent_in_channel":false`) {
+		t.Fatalf("after put = %s", body)
+	}
+	agent := "/api/kids/" + string(kidA) + "/friends/" + string(kidB) + "/agent"
+	for _, bad := range []string{`{`, `{"x":1}`} {
+		if code := g.put(t, agent, bad); code != http.StatusBadRequest {
+			t.Fatalf("%s = %d", bad, code)
+		}
+	}
+	if code := g.put(t, agent, `{"blocked":true}`); code != http.StatusNoContent {
+		t.Fatalf("block = %d", code)
+	}
+	_, body = g.do(t, "GET", "/api/kids/"+string(kidA)+"/friends", token)
+	if !strings.Contains(string(body), `"agent_blocked":true`) {
+		t.Fatalf("friends = %s", body)
+	}
+	if code := g.put(t, "/api/kids/"+string(kidB)+"/friends/"+string(kidA)+"/agent", `{"blocked":true}`); code != http.StatusNotFound {
+		t.Fatalf("other family = %d", code)
+	}
+}

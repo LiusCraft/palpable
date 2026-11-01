@@ -26,6 +26,8 @@ func (r *Router) OnAIState(d, AIIdle|AISpeaking)    // bridge/linx 回报
 func (r *Router) OnFriendRemoved(a, b)              // 立即把对方移出正在进行的转发
 func (r *Router) OnLeave(d)                         // 离开或切换前台频道
 func (r *Router) OnDisconnect(d)                    // 结束发言并释放下行 goroutine
+func (r *Router) ArmAgent(owner, blocked map[DeviceID]bool) error  // self.channel.speak：下一段 AI 语音作为 agt:<owner> 播给频道；不在频道 → ErrNotInChannel
+func (r *Router) OnAgentFrame(owner, frame)         // 热路径：主人的 AI 下行帧，小伙伴发言时转给听者
 func (r *Router) RouteOf(d) Route                   // RouteNone | RouteAI | RouteChannel
 func (r *Router) Run(ctx)                           // 看门狗，100ms 一拍
 func (r *Router) Subscribe() <-chan Event           // BurstStarted | BurstEnded
@@ -167,4 +169,4 @@ syncListen(d): want = micOn && route(d) == AI
 - 听者在 Burst 开始时一次性确定：中途加入频道的人从下一个 Burst 起收听；好友被解除时 `OnFriendRemoved` 立即移出。
 - 热路径无日志；每个 Burst 结束打一条 debug 元数据日志。
 - 延迟目标：服务端内部 p95 < 100ms（不含网络）。
-- 将来智能体入频道：`Sink` 与 `ParticipantID` 已为此预留，`voice` 不需要知道对方是设备还是智能体（见 [架构 §6](../architecture.md#6-预留小伙伴智能体作为频道成员)）。
+- 小伙伴发言（见 [架构 §6](../architecture.md#6-小伙伴智能体作为频道成员)）：`ArmAgent` 后 20 秒内 AI 开口即以 `agt:<mac>` 抢发言权，AI 说完或主人开口即结束；听者另按 `blocked` 排除，屏蔽名单由调用方在锁外算好。断流看门狗对小伙伴放宽到 3 秒（TTS 句间停顿较长）。

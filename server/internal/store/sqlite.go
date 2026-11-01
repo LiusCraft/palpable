@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 	"time"
 
 	"modernc.org/sqlite"
@@ -146,14 +147,36 @@ func queryList[T any](ctx context.Context, db *sql.DB, scan func(rowScanner) (T,
 
 type sqlDevices struct{ db *sql.DB }
 
-const deviceCols = "device_id, skin, style_id, agent_id, doll_name, kid_name, stage, guardian_id, voice_consent, speaker_id, friend_policy, created_at"
+const deviceCols = "device_id, skin, style_id, agent_id, doll_name, kid_name, stage, guardian_id, voice_consent, speaker_id, friend_policy, agent_in_channel, blocked_agents, created_at"
 
 func scanDevice(r rowScanner) (Device, error) {
 	var d Device
 	var created int64
-	err := r.Scan(&d.ID, &d.Skin, &d.StyleID, &d.AgentID, &d.DollName, &d.KidName, &d.Stage, &d.Guardian, &d.VoiceConsent, &d.SpeakerID, &d.FriendPolicy, &created)
-	d.CreatedAt = fromMillis(created)
+	var agentOn bool
+	var blocked string
+	err := r.Scan(&d.ID, &d.Skin, &d.StyleID, &d.AgentID, &d.DollName, &d.KidName, &d.Stage, &d.Guardian, &d.VoiceConsent, &d.SpeakerID, &d.FriendPolicy, &agentOn, &blocked, &created)
+	d.CreatedAt, d.AgentOff, d.BlockedAgents = fromMillis(created), !agentOn, splitDevices(blocked)
 	return d, err
+}
+
+func splitDevices(s string) []id.DeviceID {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]id.DeviceID, len(parts))
+	for i, p := range parts {
+		out[i] = id.DeviceID(p)
+	}
+	return out
+}
+
+func joinDevices(ds []id.DeviceID) string {
+	parts := make([]string, len(ds))
+	for i, d := range ds {
+		parts[i] = string(d)
+	}
+	return strings.Join(parts, ",")
 }
 
 func (r sqlDevices) Get(ctx context.Context, d id.DeviceID) (Device, error) {
@@ -165,8 +188,9 @@ func (r sqlDevices) Get(ctx context.Context, d id.DeviceID) (Device, error) {
 }
 
 func (r sqlDevices) Create(ctx context.Context, d Device) error {
-	_, err := r.db.ExecContext(ctx, "INSERT INTO device ("+deviceCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		d.ID, d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, d.FriendPolicy, toMillis(d.CreatedAt))
+	_, err := r.db.ExecContext(ctx, "INSERT INTO device ("+deviceCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		d.ID, d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, d.FriendPolicy,
+		!d.AgentOff, joinDevices(d.BlockedAgents), toMillis(d.CreatedAt))
 	if isUniqueViolation(err) {
 		err = ErrConflict
 	}
@@ -178,8 +202,10 @@ func (r sqlDevices) Create(ctx context.Context, d Device) error {
 
 func (r sqlDevices) Update(ctx context.Context, d Device) error {
 	res, err := r.db.ExecContext(ctx, `UPDATE device SET skin = ?, style_id = ?, agent_id = ?, doll_name = ?, kid_name = ?,
-		stage = ?, guardian_id = ?, voice_consent = ?, speaker_id = ?, friend_policy = ? WHERE device_id = ?`,
-		d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, d.FriendPolicy, d.ID)
+		stage = ?, guardian_id = ?, voice_consent = ?, speaker_id = ?, friend_policy = ?, agent_in_channel = ?, blocked_agents = ?
+		WHERE device_id = ?`,
+		d.Skin, d.StyleID, d.AgentID, d.DollName, d.KidName, d.Stage, d.Guardian, d.VoiceConsent, d.SpeakerID, d.FriendPolicy,
+		!d.AgentOff, joinDevices(d.BlockedAgents), d.ID)
 	if err == nil {
 		err = expectOneRow(res)
 	}

@@ -42,6 +42,11 @@ type Relations interface {
 	Decline(ctx context.Context, d id.DeviceID) []id.DeviceID
 }
 
+// Agents 让主人点名的小伙伴在频道里发言，由 app 实现（要先查两边家长的设置）。
+type Agents interface {
+	AgentSpeak(ctx context.Context, owner id.DeviceID) error
+}
+
 type Sharer interface {
 	Publish(ctx context.Context, from id.DeviceID, description string) (int, error)
 }
@@ -52,6 +57,7 @@ type Services struct {
 	Channels  Channels
 	Relations Relations
 	Share     Sharer // 可为 nil
+	Agents    Agents // 可为 nil
 }
 
 func schema(props string, required ...string) json.RawMessage {
@@ -76,6 +82,9 @@ func BusinessTools(s Services) []Tool {
 	tools := append(baseTools(s), friendTools(s)...)
 	if s.Share != nil {
 		tools = append(tools, shareTool(s.Share))
+	}
+	if s.Agents != nil {
+		tools = append(tools, speakTool(s.Agents))
 	}
 	return tools
 }
@@ -324,6 +333,27 @@ func friendTools(s Services) []Tool {
 				}
 				return ok("好的，那就先不交朋友。")
 			},
+		},
+	}
+}
+
+// speakTool 让小伙伴作为频道成员说一段话，规则见 docs/trust.md §5。
+func speakTool(ag Agents) Tool {
+	return Tool{
+		Name: "self.channel.speak",
+		Description: "小朋友请你对频道里的好朋友们说话时调用（比如「跟大家说……」「给大家讲个笑话」）。调用成功后，你接下来说的这一段话会被频道里的好朋友听到。" +
+			"开头先说「我是某某的小伙伴」；只说小朋友请你说的内容，不要说出小朋友的真实姓名、学校、地址、电话。",
+		InputSchema: noArgs(),
+		Call: func(ctx context.Context, d id.DeviceID, _ json.RawMessage) (ToolResult, error) {
+			switch err := ag.AgentSpeak(ctx, d); {
+			case errors.Is(err, channel.ErrNotInChannel):
+				return fail("现在不在频道里哦，先加入公园频道或群聊吧。")
+			case errors.Is(err, device.ErrAgentOff):
+				return fail("爸爸妈妈还没有打开「小伙伴可以在频道里说话」，这次就悄悄告诉你吧。")
+			case err != nil:
+				return ToolResult{}, err
+			}
+			return ok("好的，接下来这段话频道里的好朋友都能听到。")
 		},
 	}
 }

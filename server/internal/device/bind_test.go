@@ -159,3 +159,38 @@ func TestFriendPolicy(t *testing.T) {
 		t.Fatal("unknown device must not auto approve")
 	}
 }
+
+func TestAgentAudience(t *testing.T) {
+	ctx := context.Background()
+	_, devs, _ := newBinder(t)
+	owner, l := id.DeviceID("02:00:00:00:00:01"), id.DeviceID("02:00:00:00:00:02")
+	blocked, err := devs.AgentAudience(ctx, owner, []id.DeviceID{l, "02:00:00:00:00:99"})
+	if err != nil || blocked[l] || !blocked["02:00:00:00:00:99"] {
+		t.Fatalf("default audience %v %v", blocked, err)
+	}
+	if err := devs.BlockAgent(ctx, l, owner, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := devs.BlockAgent(ctx, l, owner, true); err != nil { // 重复屏蔽不重复记
+		t.Fatal(err)
+	}
+	if p, _ := devs.Profile(ctx, l); len(p.BlockedAgents) != 1 {
+		t.Fatalf("blocked %v", p.BlockedAgents)
+	}
+	if blocked, _ := devs.AgentAudience(ctx, owner, []id.DeviceID{l}); !blocked[l] {
+		t.Fatal("listener's guardian blocked this companion")
+	}
+	_ = devs.BlockAgent(ctx, l, owner, false)
+	if blocked, _ := devs.AgentAudience(ctx, owner, []id.DeviceID{l}); blocked[l] {
+		t.Fatal("unblocked")
+	}
+	if err := devs.SetAgentInChannel(ctx, owner, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devs.AgentAudience(ctx, owner, nil); !errors.Is(err, ErrAgentOff) {
+		t.Fatalf("agent off: %v", err)
+	}
+	if _, err := devs.AgentAudience(ctx, "02:00:00:00:00:99", nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown owner: %v", err)
+	}
+}

@@ -140,7 +140,7 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		return p.AgentID, err
 	})
 	a.mcp = mcp.New(a.toLinx, a.toDevice, a.hasMCP)
-	services := mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel}
+	services := mcp.Services{Devices: a.devices, Zones: a.zones, Channels: chans, Relations: rel, Agents: a}
 	if d.ai != nil {
 		services.Share = share.New(chans, rel, d.ai, a.history, a.dollName)
 	}
@@ -282,7 +282,7 @@ func (a *App) serve(s *gateway.Session, p device.Profile) {
 	if a.ai == nil {
 		return
 	}
-	if err := a.ai.Open(ctx, s, persona(p)); err != nil {
+	if err := a.ai.Open(ctx, a.tap(s), persona(p)); err != nil {
 		slog.Warn("open ai session", "device_id", d, "error", err)
 		return
 	}
@@ -727,7 +727,7 @@ func (a *App) handoff(e device.Named) {
 		return
 	}
 	a.ai.Close(e.Device)
-	if err := a.ai.Open(ctx, sess, persona(p)); err != nil {
+	if err := a.ai.Open(ctx, a.tap(sess), persona(p)); err != nil {
 		slog.Warn("reopen ai after handoff", "device_id", e.Device, "error", err)
 		return
 	}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { copy } from '../ui/copy'
 import { Button, Chip } from '../ui/components'
-import { parentApi, type Digest, type Friend, type FriendPolicy, type Group, type Kid } from './api'
+import { parentApi, type Digest, type Friend, type FriendPolicy, type Group, type Kid, type Settings } from './api'
 
 // 家长端（Web 模拟）：好友与群聊、今日回顾、家长控制。对应效果图第 7 格。
 // 只调 /api，所有规则（归属、确认、解除）都在服务端。
@@ -18,7 +18,7 @@ export function ParentPanel() {
   const [friends, setFriends] = useState<Friend[]>([])
   const [groups, setGroups] = useState<Group[]>([])
   const [digest, setDigest] = useState<Digest | null>(null)
-  const [policy, setPolicy] = useState<FriendPolicy>('approve')
+  const [settings, setSettings] = useState<Settings>({ friend_policy: 'approve', agent_in_channel: true })
   const [tab, setTab] = useState<Tab>('friends')
   const [error, setError] = useState('')
   const [now, setNow] = useState(0) // 随轮询更新，渲染时不直接取时间
@@ -33,7 +33,7 @@ export function ParentPanel() {
       const id = kid || ks.find((k) => k.online)?.id || ks[0]?.id
       if (!id) return
       const [f, g, d, st] = await Promise.all([parentApi.friends(id), parentApi.groups(id), parentApi.digest(id), parentApi.settings(id)])
-      setPolicy(st.friend_policy)
+      setSettings(st)
       setFriends(f)
       setGroups(g)
       setDigest(d)
@@ -180,20 +180,33 @@ export function ParentPanel() {
                     <input
                       type="radio"
                       name="friend-policy"
-                      checked={policy === p}
-                      onChange={() => void act(() => parentApi.setFriendPolicy(current, p))}
+                      checked={settings.friend_policy === p}
+                      onChange={() => void act(() => parentApi.saveSettings(current, { ...settings, friend_policy: p }))}
                     />
                     {copy.parent.policy[p]}
                   </label>
                 ))}
+                <label className="flex items-center gap-1.5 pt-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={settings.agent_in_channel}
+                    onChange={(e) => void act(() => parentApi.saveSettings(current, { ...settings, agent_in_channel: e.target.checked }))}
+                  />
+                  {copy.parent.agentInChannel}
+                </label>
               </li>
             )}
             {confirmed.map((f) => (
-              <li key={f.device_id} className="flex items-center justify-between">
+              <li key={f.device_id} className="flex flex-wrap items-center justify-between gap-1">
                 <span>{f.name || copy.friend.someone}</span>
-                <Button tone="ghost" onClick={() => void act(() => parentApi.remove(current, f.device_id))}>
-                  {copy.parent.remove}
-                </Button>
+                <span className="flex gap-1">
+                  <Button tone="ghost" onClick={() => void act(() => parentApi.blockAgent(current, f.device_id, !f.agent_blocked))}>
+                    {f.agent_blocked ? copy.parent.unblockAgent : copy.parent.blockAgent}
+                  </Button>
+                  <Button tone="ghost" onClick={() => void act(() => parentApi.remove(current, f.device_id))}>
+                    {copy.parent.remove}
+                  </Button>
+                </span>
               </li>
             ))}
             <li className="pt-2 text-xs text-slate-400">对话原话：</li>

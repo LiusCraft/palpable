@@ -20,6 +20,8 @@ export interface Friend {
   /** pending 时：you 等你同意；other 你已同意（或自动放行），在等对方家长 */
   waiting_for?: 'you' | 'other'
   auto: boolean
+  /** 你屏蔽了这位朋友的小伙伴：它在频道里说话时你家孩子听不到 */
+  agent_blocked: boolean
   online: boolean
   since: string
 }
@@ -35,6 +37,12 @@ export interface Group {
 }
 
 export type FriendPolicy = 'approve' | 'notify'
+
+export interface Settings {
+  friend_policy: FriendPolicy
+  /** 自家小伙伴被孩子点名时，能否在频道里对好朋友说话 */
+  agent_in_channel: boolean
+}
 
 export interface Digest {
   met: { friend: string; name: string; channel: string; at: string }[]
@@ -62,6 +70,8 @@ export const parentApi = {
   bind: (code: string, voiceConsent: boolean) =>
     call<{ id: string }>('POST', '/api/bindings', { code, ai_companion: true, voice_consent: voiceConsent }),
   unbind: (kid: string) => call<void>('DELETE', `/api/kids/${kid}`),
-  settings: (kid: string) => call<{ friend_policy: FriendPolicy }>('GET', `/api/kids/${kid}/settings`),
-  setFriendPolicy: (kid: string, friend_policy: FriendPolicy) => call<void>('PUT', `/api/kids/${kid}/settings`, { friend_policy }),
+  settings: (kid: string) => call<Settings>('GET', `/api/kids/${kid}/settings`),
+  saveSettings: (kid: string, s: Settings) => call<void>('PUT', `/api/kids/${kid}/settings`, s),
+  blockAgent: (kid: string, friend: string, blocked: boolean) =>
+    call<void>('PUT', `/api/kids/${kid}/friends/${friend}/agent`, { blocked }),
 }

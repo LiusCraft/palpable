@@ -412,3 +412,106 @@ func TestSlowListenerDoesNotBlockOthers(t *testing.T) {
 		t.Fatalf("slow listener got %d items; queue must drop oldest frames", n)
 	}
 }
+
+// 小伙伴进频道：主人点名后，下一段 AI 语音作为 agt:<owner> 播给好友；陌生人、被屏蔽的听者听不到。
+func TestAgentSpeaksToFriendsOnlyWhenArmed(t *testing.T) {
+	g := newRig(t)
+	for _, x := range []id.DeviceID{a, b, c, d} {
+		g.members.join(x)
+	}
+	// 没点名：AI 说话只有主人自己听到。
+	g.r.OnAIState(a, AISpeaking)
+	g.r.OnAgentFrame(a, []byte{7})
+	g.r.OnAIState(a, AIIdle)
+	time.Sleep(20 * time.Millisecond)
+	if len(g.sink.of(b)) != 0 {
+		t.Fatalf("unarmed AI speech leaked to friend: %v", g.sink.of(b))
+	}
+
+	// 点名；d 的家长屏蔽了 a 的小伙伴。
+	if err := g.r.ArmAgent(a, map[id.DeviceID]bool{d: true}); err != nil {
+		t.Fatal(err)
+	}
+	g.r.OnAIState(a, AISpeaking)
+	if e := nextEvent(t, g.r); e.Kind != BurstStarted || e.Burst.Speaker != id.Agent(a) || len(e.Burst.Listeners) != 1 || e.Burst.Listeners[0] != id.Device(b) {
+		t.Fatalf("agent burst = %+v", e)
+	}
+	g.r.OnAgentFrame(a, []byte{8})
+	g.r.OnAgentFrame(b, []byte{9}) // 别人的设备不算
+	eventually(t, func() bool { return equal(g.sink.of(b), []string{"speaker start " + string(a), "frame 8"}) }, "friend hears agent")
+	if len(g.sink.of(c)) != 0 || len(g.sink.of(d)) != 0 || len(g.sink.of(a)) != 0 {
+		t.Fatalf("stranger %v, blocked %v, owner %v", g.sink.of(c), g.sink.of(d), g.sink.of(a))
+	}
+	// 小伙伴发言时朋友开口：占线。
+	g.r.OnMicState(b, true)
+	eventually(t, func() bool { return len(g.sink.of(b)) >= 3 && g.sink.of(b)[2] == "sound busy" }, "busy while agent speaks")
+	g.r.OnMicState(b, false)
+
+	g.r.OnAIState(a, AIIdle)
+	if e := nextEvent(t, g.r); e.Kind != BurstEnded {
+		t.Fatalf("want ended, got %+v", e)
+	}
+	eventually(t, func() bool {
+		got := g.sink.of(b)
+		return len(got) > 0 && got[len(got)-1] == "speaker stop "+string(a)
+	}, "agent stop")
+	// 一次点名只管一段话。
+	g.r.OnAIState(a, AISpeaking)
+	g.r.OnAgentFrame(a, []byte{10})
+	time.Sleep(20 * time.Millisecond)
+	for _, m := range g.sink.of(b) {
+		if m == "frame 10" {
+			t.Fatal("second utterance should be private")
+		}
+	}
+}
+
+func TestAgentArmRulesAndOwnerPreempts(t *testing.T) {
+	g := newRig(t)
+	if err := g.r.ArmAgent(a, nil); err != ErrNotInChannel {
+		t.Fatalf("not in channel: %v", err)
+	}
+	g.members.join(a)
+	g.members.join(b)
+	// 点名后太久才开口：过期，不播。
+	_ = g.r.ArmAgent(a, nil)
+	g.clk.add(agentArmWindow)
+	g.r.OnAIState(a, AISpeaking)
+	g.r.OnAIState(a, AIIdle)
+	select {
+	case e := <-g.r.Subscribe():
+		t.Fatalf("expired arm should not start a burst: %+v", e)
+	default:
+	}
+	// 主人自己开口：小伙伴让路。
+	_ = g.r.ArmAgent(a, nil)
+	g.r.OnAIState(a, AISpeaking)
+	nextEvent(t, g.r)
+	g.r.OnMicState(a, true)
+	if e := nextEvent(t, g.r); e.Kind != BurstEnded || e.Burst.Speaker != id.Agent(a) {
+		t.Fatalf("owner should preempt agent: %+v", e)
+	}
+	if e := nextEvent(t, g.r); e.Kind != BurstStarted || e.Burst.Speaker != id.Device(a) {
+		t.Fatalf("owner burst: %+v", e)
+	}
+	g.r.OnMicState(a, false)
+	g.r.OnDisconnect(a)
+	nextEvent(t, g.r)
+
+	// 小伙伴发言断流太久：看门狗结束（比人说话的超时宽）。
+	_ = g.r.ArmAgent(b, nil)
+	g.r.OnAIState(b, AISpeaking)
+	nextEvent(t, g.r)
+	g.clk.add(frameTimeout + time.Millisecond)
+	g.r.expire()
+	select {
+	case e := <-g.r.Subscribe():
+		t.Fatalf("agent burst ended too early: %+v", e)
+	default:
+	}
+	g.clk.add(agentFrameTimeout)
+	g.r.expire()
+	if e := nextEvent(t, g.r); e.Kind != BurstEnded {
+		t.Fatalf("watchdog: %+v", e)
+	}
+}

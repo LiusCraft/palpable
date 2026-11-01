@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +24,8 @@ type Devices interface {
 	ByGuardian(ctx context.Context, g id.GuardianID) ([]device.Profile, error)
 	Profile(ctx context.Context, d id.DeviceID) (device.Profile, error)
 	SetFriendPolicy(ctx context.Context, d id.DeviceID, p device.FriendPolicy) error
+	SetAgentInChannel(ctx context.Context, d id.DeviceID, on bool) error
+	BlockAgent(ctx context.Context, listener, owner id.DeviceID, blocked bool) error
 }
 
 type Relations interface {
@@ -77,6 +80,7 @@ func New(auth Auth, devices Devices, relations Relations, channels Channels, his
 	a.mux.HandleFunc("GET /api/kids/{id}/digest", a.guard(a.kid(a.digest)))
 	a.mux.HandleFunc("GET /api/kids/{id}/settings", a.guard(a.kid(a.settings)))
 	a.mux.HandleFunc("PUT /api/kids/{id}/settings", a.guard(a.kid(a.putSettings)))
+	a.mux.HandleFunc("PUT /api/kids/{id}/friends/{fid}/agent", a.guard(a.kid(a.blockAgent)))
 	return a
 }
 
@@ -99,10 +103,12 @@ type Friend struct {
 	Name      string      `json:"name"`
 	Status    string      `json:"status"` // pending / confirmed
 	// WaitingFor 在 pending 时说明在等谁：you（等你批准）或 other（你已批准或自动放行，在等对方家长）。
-	WaitingFor string    `json:"waiting_for,omitempty"`
-	Auto       bool      `json:"auto"` // 两家都设为"孩子自己交友"，自动成为好友，家长只是被通知
-	Online     bool      `json:"online"`
-	Since      time.Time `json:"since"`
+	WaitingFor string `json:"waiting_for,omitempty"`
+	Auto       bool   `json:"auto"` // 两家都设为"孩子自己交友"，自动成为好友，家长只是被通知
+	// AgentBlocked：你屏蔽了这位朋友的小伙伴，它在频道里说话时你家孩子听不到。
+	AgentBlocked bool      `json:"agent_blocked"`
+	Online       bool      `json:"online"`
+	Since        time.Time `json:"since"`
 }
 
 type Group struct {
@@ -185,7 +191,8 @@ func (a *API) friends(w http.ResponseWriter, r *http.Request, _ id.GuardianID, k
 			}
 		}
 		out = append(out, Friend{RequestID: f.ID, DeviceID: other, Name: name, Status: status, WaitingFor: waiting,
-			Auto: f.ConfirmedBy == relation.AutoGuardian, Online: a.online(other), Since: f.CreatedAt})
+			Auto: f.ConfirmedBy == relation.AutoGuardian, AgentBlocked: slices.Contains(kid.BlockedAgents, other),
+			Online: a.online(other), Since: f.CreatedAt})
 	}
 	writeJSON(w, out)
 }
@@ -263,12 +270,15 @@ func (a *API) digest(w http.ResponseWriter, r *http.Request, _ id.GuardianID, ki
 // Settings 是家长对自家孩子的设置，见 docs/trust.md §1。
 type Settings struct {
 	FriendPolicy string `json:"friend_policy"` // approve：需我批准；notify：孩子自己交友、事后通知我
+	// AgentInChannel：自家小伙伴被孩子点名时能否在频道里对好友说话。PUT 时省略表示不改。
+	AgentInChannel *bool `json:"agent_in_channel,omitempty"`
 }
 
 var friendPolicies = map[string]device.FriendPolicy{"approve": device.FriendApprove, "notify": device.FriendNotify}
 
 func (a *API) settings(w http.ResponseWriter, _ *http.Request, _ id.GuardianID, kid device.Profile) {
-	out := Settings{FriendPolicy: "approve"}
+	on := !kid.AgentOff
+	out := Settings{FriendPolicy: "approve", AgentInChannel: &on}
 	if kid.FriendPolicy == device.FriendNotify {
 		out.FriendPolicy = "notify"
 	}
@@ -286,6 +296,30 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request, _ id.GuardianI
 		return
 	}
 	if err := a.devices.SetFriendPolicy(r.Context(), kid.ID, policy); err != nil {
+		internal(w, err)
+		return
+	}
+	if s.AgentInChannel != nil {
+		if err := a.devices.SetAgentInChannel(r.Context(), kid.ID, *s.AgentInChannel); err != nil {
+			internal(w, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// blockAgent 屏蔽或解除屏蔽一位朋友的小伙伴（《拟人化互动服务管理暂行办法》第十四条"屏蔽特定角色"）。
+func (a *API) blockAgent(w http.ResponseWriter, r *http.Request, _ id.GuardianID, kid device.Profile) {
+	var req struct {
+		Blocked bool `json:"blocked"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, `body must be {"blocked": bool}`)
+		return
+	}
+	if err := a.devices.BlockAgent(r.Context(), kid.ID, id.DeviceID(r.PathValue("fid")), req.Blocked); err != nil {
 		internal(w, err)
 		return
 	}

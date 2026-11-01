@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestDevices(t *testing.T) {
 		got, err := r.Get(ctx, macA)
 		must(t, err)
 		dev.CreatedAt = t0.Truncate(time.Millisecond)
-		if got != dev {
+		if !reflect.DeepEqual(got, dev) {
 			t.Fatalf("got %+v, want %+v", got, dev)
 		}
 
@@ -78,7 +79,7 @@ func TestDevices(t *testing.T) {
 		got, err = r.Get(ctx, macA)
 		must(t, err)
 		upd.CreatedAt = dev.CreatedAt
-		if got != upd {
+		if !reflect.DeepEqual(got, upd) {
 			t.Fatalf("got %+v, want %+v", got, upd)
 		}
 
@@ -380,6 +381,24 @@ func TestFriendshipApprovalsFollowOrder(t *testing.T) {
 		got, _ = d.Get(ctx, macC)
 		if got.FriendPolicy != 0 {
 			t.Fatalf("friend policy after update %+v", got)
+		}
+	})
+}
+
+func TestDeviceAgentSettings(t *testing.T) {
+	run(t, func(t *testing.T, ctx context.Context, s Store) {
+		r := s.Devices()
+		must(t, r.Create(ctx, Device{ID: macA, CreatedAt: t0}))
+		d, _ := r.Get(ctx, macA)
+		if d.AgentOff || len(d.BlockedAgents) != 0 {
+			t.Fatalf("defaults %+v", d)
+		}
+		d.AgentOff, d.BlockedAgents = true, []id.DeviceID{macB, macC}
+		must(t, r.Update(ctx, d))
+		d.BlockedAgents[0] = "mutated"
+		got, _ := r.Get(ctx, macA)
+		if !got.AgentOff || len(got.BlockedAgents) != 2 || got.BlockedAgents[0] != macB || got.BlockedAgents[1] != macC {
+			t.Fatalf("got %+v", got)
 		}
 	})
 }

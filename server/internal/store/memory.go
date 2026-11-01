@@ -61,6 +61,7 @@ func (r memDevices) Get(_ context.Context, d id.DeviceID) (Device, error) {
 	if !ok {
 		return Device{}, fmt.Errorf("get device %s: %w", d, ErrNotFound)
 	}
+	dev.BlockedAgents = slices.Clone(dev.BlockedAgents)
 	return dev, nil
 }
 
@@ -71,6 +72,7 @@ func (r memDevices) Create(_ context.Context, d Device) error {
 		return fmt.Errorf("create device %s: %w", d.ID, ErrConflict)
 	}
 	d.CreatedAt = roundMillis(d.CreatedAt)
+	d.BlockedAgents = slices.Clone(d.BlockedAgents)
 	r.m.devices[d.ID] = d
 	return nil
 }
@@ -83,6 +85,7 @@ func (r memDevices) Update(_ context.Context, d Device) error {
 		return fmt.Errorf("update device %s: %w", d.ID, ErrNotFound)
 	}
 	d.CreatedAt = old.CreatedAt
+	d.BlockedAgents = slices.Clone(d.BlockedAgents)
 	r.m.devices[d.ID] = d
 	return nil
 }

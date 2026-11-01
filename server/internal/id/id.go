@@ -15,7 +15,7 @@ type ChannelID string
 
 type GuardianID string
 
-// ParticipantID 是频道成员：设备为 "dev:<mac>"；"agt:<mac>" 预留给入频道的智能体。
+// ParticipantID 是频道里能说能听的实体：设备为 "dev:<mac>"，设备的小伙伴智能体为 "agt:<mac>"。
 type ParticipantID string
 
 type Kind int
@@ -23,7 +23,7 @@ type Kind int
 const (
 	KindUnknown Kind = iota
 	KindDevice
-	KindAgent // 预留
+	KindAgent
 )
 
 const (
@@ -42,6 +42,9 @@ func (p ParticipantID) Kind() Kind {
 }
 
 func Device(d DeviceID) ParticipantID { return ParticipantID(devicePrefix + string(d)) }
+
+// Agent 是设备 d 的小伙伴在频道里的身份。
+func Agent(d DeviceID) ParticipantID { return ParticipantID(agentPrefix + string(d)) }
 
 // OwnerDevice 返回参与者所属的设备；好友判断与家长控制都以它为准，
 // 所以智能体参与者也归到它的设备。无法识别时返回空串。

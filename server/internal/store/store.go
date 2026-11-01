@@ -42,7 +42,10 @@ type Device struct {
 	VoiceConsent bool
 	SpeakerID    string
 	FriendPolicy int // 含义由 device 定义
-	CreatedAt    time.Time
+	// AgentOff 为 true 表示家长不允许自家小伙伴在频道里发言（库里存 agent_in_channel = 0）。
+	AgentOff      bool
+	BlockedAgents []id.DeviceID // 家长屏蔽的别家小伙伴
+	CreatedAt     time.Time
 }
 
 type DeviceRepo interface {
