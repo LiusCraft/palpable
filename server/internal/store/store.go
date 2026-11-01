@@ -21,6 +21,7 @@ var (
 // Store 汇总各模块的仓储；业务模块只依赖自己那一个接口。
 type Store interface {
 	Devices() DeviceRepo
+	DeviceKeys() DeviceKeyRepo
 	Styles() StyleRepo
 	Guardians() GuardianRepo
 	Friendships() FriendshipRepo
@@ -50,6 +51,18 @@ type DeviceRepo interface {
 	// Delete 在同一事务里删除设备及其好友关系、群成员身份与历史。
 	Delete(ctx context.Context, d id.DeviceID) error
 	ListByGuardian(ctx context.Context, g id.GuardianID) ([]Device, error) // 按建档时间升序
+}
+
+// DeviceKey 是设备的认证公钥（SPKI DER）。一台设备一把，登记后不经协议更换。
+type DeviceKey struct {
+	Device    id.DeviceID
+	PublicKey []byte
+	CreatedAt time.Time
+}
+
+type DeviceKeyRepo interface {
+	Get(ctx context.Context, d id.DeviceID) (DeviceKey, error)
+	Create(ctx context.Context, k DeviceKey) error // 已存在返回 ErrConflict
 }
 
 // Style 记录风格到灵矽智能体的映射；引导智能体的 ID 为 "welcome"，Skin 为空。

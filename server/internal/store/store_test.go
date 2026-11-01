@@ -332,3 +332,18 @@ func TestReopenKeepsDataAndSkipsAppliedMigrations(t *testing.T) {
 		t.Fatalf("data lost after reopen: %v", err)
 	}
 }
+
+func TestDeviceKeys(t *testing.T) {
+	run(t, func(t *testing.T, ctx context.Context, s Store) {
+		r := s.DeviceKeys()
+		_, err := r.Get(ctx, macA)
+		wantErr(t, err, ErrNotFound)
+		must(t, r.Create(ctx, DeviceKey{Device: macA, PublicKey: []byte{1, 2, 3}, CreatedAt: t0}))
+		wantErr(t, r.Create(ctx, DeviceKey{Device: macA, PublicKey: []byte{9}, CreatedAt: t0}), ErrConflict)
+		k, err := r.Get(ctx, macA)
+		must(t, err)
+		if string(k.PublicKey) != "\x01\x02\x03" || !k.CreatedAt.Equal(roundMillis(t0)) {
+			t.Fatalf("got %+v", k)
+		}
+	})
+}

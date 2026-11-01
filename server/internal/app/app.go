@@ -78,6 +78,8 @@ type deps struct {
 	ai    ai
 	linx  linxapi.Client
 	demo  config.Demo
+	// enrollment 为空时不认证，测试默认如此；配置文件默认 open。
+	enrollment device.Enrollment
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -85,7 +87,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := deps{store: db, demo: cfg.Demo}
+	d := deps{store: db, demo: cfg.Demo, enrollment: device.Enrollment(cfg.Auth.Enrollment)}
 	if cfg.Linx.Enabled() {
 		d.ai = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token})
 		d.linx = linxapi.New(cfg.Linx.APIBase, cfg.Linx.Token).WithOTA(cfg.Linx.OTAURL)
@@ -148,6 +150,16 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		d.ai.OnMCP(a.mcp.OnLinxMCP)
 	}
 	a.gw = gateway.New(a, allowDevOrigin)
+	if d.enrollment != "" {
+		auth, err := device.NewAuthenticator(d.store.DeviceKeys(), d.enrollment)
+		if err != nil {
+			return nil, err
+		}
+		if !auth.Required() {
+			slog.Warn("device authentication disabled: any client can claim any MAC")
+		}
+		a.gw.SetAuth(auth)
+	}
 	if d.demo.World {
 		if err := a.startWorld(ctx); err != nil {
 			return nil, err

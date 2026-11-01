@@ -20,8 +20,12 @@ func Load(path string) (Config, error)
 type Config struct {
     Addr   string // 默认 ":8080"
     DBPath string // SQLite 文件，默认 "palpable.db"
+    Auth   Auth
     Linx   Linx
     Demo   Demo
+}
+type Auth struct {
+    Enrollment string   // open（默认）| manifest | off，见 docs/trust.md §2.3
 }
 type Linx struct {
     WSURL, Token, APIBase, OTAURL, VoiceprintBase string   // WSURL 为空 = 不启用 AI

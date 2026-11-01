@@ -126,11 +126,11 @@ AI 对话通过灵矽（xrobotd / linxd）接入，所有密钥只放**服务端
 | 键 | 说明 |
 | --- | --- |
 | `addr` | 监听地址，默认 `:8080` |
+| `auth.enrollment` | 设备认证：`open`（首次上线登记公钥，默认）、`manifest`（只认出厂清单）、`off`（不认证，仅供固件过渡），见 [trust.md](docs/trust.md#2-设备身份与认证) |
 | `linx.ws_url` | 灵矽 WebSocket 地址，例如 `wss://xrobo-io.qiniuapi.com/v1/ws/`；为空则不启用 AI 对话 |
 | `linx.token` | Bearer 令牌，WebSocket 与 REST 共用 |
 | `linx.api_base` | 灵矽 REST 地址，默认 `https://xrobo.qiniu.com` |
 | `linx.voiceprint_base` | 声纹服务地址（演示环境） |
-
 | `linx.ota_url` | 灵矽 OTA 地址，用于激活预注册的设备 |
 | `demo.guardian` / `demo.guardian_name` | 演示：新设备自动绑定到这个家长 |
 | `demo.voice_consent` | 演示：预置监护人对声纹登记的同意 |

@@ -5,12 +5,14 @@
  */
 export type PalpableMessage =
   | Hello
+  | HelloProof
   | Wake
   | MicState
   | Proximity
   | Location
   | Mcp
   | HelloAck
+  | HelloChallenge
   | AudioDownlink
   | Light
   | Haptic
@@ -19,6 +21,8 @@ export type PalpableMessage =
   | Presence
   | ChannelState
   | FriendState
+  | BindCode
+  | BindState
   | Error;
 /**
  * 设备 MAC，小写、冒号分隔；也是设备在灵矽侧的 Device-Id
@@ -35,6 +39,10 @@ export interface Hello {
    */
   skin?: string;
   firmware?: string;
+  /**
+   * 设备公钥 base64(SPKI DER)，ECDSA P-256；首次登记时必填，之后可省略，与已登记的不一致时拒绝。见 docs/trust.md §2
+   */
+  pubkey?: string;
   audio_params: AudioParams;
   capabilities: Capability[];
 }
@@ -46,6 +54,13 @@ export interface AudioParams {
    * 单帧毫秒数
    */
   frame_duration: 60;
+}
+/**
+ * 对 hello.challenge 的应答：ECDSA-P256-SHA256 对 "palpable-auth-v1\n" + device_id + "\n" + nonce 签名，r‖s 共 64 字节，base64url 无填充
+ */
+export interface HelloProof {
+  type: "hello.proof";
+  signature: string;
 }
 export interface Wake {
   type: "wake";
@@ -1065,6 +1080,16 @@ export interface HelloAck {
   audio_params: AudioParams;
 }
 /**
+ * 认证挑战：服务端在 hello 之后、hello.ack 之前发送；设备须在握手时限内回 hello.proof
+ */
+export interface HelloChallenge {
+  type: "hello.challenge";
+  /**
+   * 32 字节随机数，base64url 无填充
+   */
+  nonce: string;
+}
+/**
  * 下行音频参数。AI 通道就绪后发送，早于任何下行音频帧；设备按它配置 Opus 解码器。
  */
 export interface AudioDownlink {
@@ -1092,13 +1117,16 @@ export interface Sound {
 export interface SpeakerState {
   type: "speaker.state";
   state: "start" | "stop";
-  source: "ai" | "peer";
   /**
-   * source 为 peer 时的发言设备
+   * agent 表示别人的小伙伴在频道里发言，音频参数与 audio.downlink 相同
+   */
+  source: "ai" | "peer" | "agent";
+  /**
+   * source 为 peer 或 agent 时的发言设备（agent 为该小伙伴的主人设备）
    */
   from?: string;
   /**
-   * source 为 peer 时发言者小伙伴的名字，供设备展示
+   * source 为 peer 或 agent 时发言者小伙伴的名字，供设备展示
    */
   name?: string;
 }
@@ -1123,13 +1151,34 @@ export interface ChannelState {
   color?: string;
 }
 /**
- * 好友关系变化；pending 时设备振动并提示，确认由家长端完成
+ * 好友关系变化：asking 时小伙伴问孩子要不要交朋友；pending 表示在等家长同意。规则见 docs/trust.md §4
  */
 export interface FriendState {
   type: "friend.state";
-  event: "pending" | "confirmed" | "removed";
+  event: "asking" | "pending" | "confirmed" | "removed";
   device_id: MAC;
   name?: string;
+}
+/**
+ * 设备尚未绑定监护人：设备逐位播报绑定码，家长在家长端输入后完成绑定。绑定前服务端不提供任何服务
+ */
+export interface BindCode {
+  type: "bind.code";
+  /**
+   * 6 位数字
+   */
+  code: string;
+  /**
+   * 有效秒数；过期后服务端下发新码
+   */
+  expires_in: number;
+}
+/**
+ * 绑定变化：bound 后进入起名流程；unbound 表示家长已解绑，设备回到出厂状态
+ */
+export interface BindState {
+  type: "bind.state";
+  event: "bound" | "unbound";
 }
 export interface Error {
   type: "error";

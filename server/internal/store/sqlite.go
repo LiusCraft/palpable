@@ -41,6 +41,7 @@ func Open(ctx context.Context, path string) (*SQLite, error) {
 func (s *SQLite) Close() error { return s.db.Close() }
 
 func (s *SQLite) Devices() DeviceRepo         { return sqlDevices{s.db} }
+func (s *SQLite) DeviceKeys() DeviceKeyRepo   { return sqlDeviceKeys{s.db} }
 func (s *SQLite) Styles() StyleRepo           { return sqlStyles{s.db} }
 func (s *SQLite) Guardians() GuardianRepo     { return sqlGuardians{s.db} }
 func (s *SQLite) Friendships() FriendshipRepo { return sqlFriendships{s.db} }
@@ -515,4 +516,31 @@ func (r sqlHistory) ListByDevice(ctx context.Context, d id.DeviceID, from, to ti
 		return nil, fmt.Errorf("list history of %s: %w", d, err)
 	}
 	return out, nil
+}
+
+// ---- device_key ----
+
+type sqlDeviceKeys struct{ db *sql.DB }
+
+func (r sqlDeviceKeys) Get(ctx context.Context, d id.DeviceID) (DeviceKey, error) {
+	k := DeviceKey{Device: d}
+	var created int64
+	err := r.db.QueryRowContext(ctx, `SELECT public_key, created_at FROM device_key WHERE device_id = ?`, d).Scan(&k.PublicKey, &created)
+	if err != nil {
+		return DeviceKey{}, fmt.Errorf("get device key %s: %w", d, notFoundIfNoRows(err))
+	}
+	k.CreatedAt = fromMillis(created)
+	return k, nil
+}
+
+func (r sqlDeviceKeys) Create(ctx context.Context, k DeviceKey) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO device_key (device_id, public_key, created_at) VALUES (?, ?, ?)`,
+		k.Device, k.PublicKey, toMillis(k.CreatedAt))
+	if isUniqueViolation(err) {
+		return fmt.Errorf("create device key %s: %w", k.Device, ErrConflict)
+	}
+	if err != nil {
+		return fmt.Errorf("create device key %s: %w", k.Device, err)
+	}
+	return nil
 }

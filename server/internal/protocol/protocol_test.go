@@ -105,6 +105,11 @@ func TestEncodedDownstreamMatchesSchema(t *testing.T) {
 		&FriendState{Type: TypeFriendState, Event: "pending", DeviceID: "02:00:00:00:00:02", Name: "小兔"},
 		&Mcp{Type: TypeMcp, Payload: json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)},
 		&Sound{Type: TypeSound, Name: "busy"},
+		&HelloChallenge{Type: TypeHelloChallenge, Nonce: strings.Repeat("a", 43)},
+		&BindCode{Type: TypeBindCode, Code: "375912", ExpiresIn: 600},
+		&BindState{Type: TypeBindState, Event: "unbound"},
+		&FriendState{Type: TypeFriendState, Event: "asking", DeviceID: "02:00:00:00:00:02"},
+		&SpeakerState{Type: TypeSpeakerState, State: "start", Source: "agent", From: "02:00:00:00:00:02", Name: "小龙"},
 	}
 	for _, m := range msgs {
 		raw, err := Encode(m)
@@ -139,6 +144,10 @@ func TestMsgType(t *testing.T) {
 		{&SpeakerState{}, TypeSpeakerState},
 		{&Presence{}, TypePresence},
 		{&Error{}, TypeError},
+		{&HelloProof{}, TypeHelloProof},
+		{&HelloChallenge{}, TypeHelloChallenge},
+		{&BindCode{}, TypeBindCode},
+		{&BindState{}, TypeBindState},
 	}
 	for _, c := range cases {
 		if got := c.msg.MsgType(); got != c.want {
@@ -158,6 +167,8 @@ func TestDecodeUpstreamAcceptsEveryUpstreamType(t *testing.T) {
 		{`{"type":"mic.state","state":"start"}`, &MicState{}},
 		{`{"type":"proximity","peers":[]}`, &Proximity{}},
 		{`{"type":"location","lat":31.2,"lng":121.5}`, &Location{}},
+		{`{"type":"hello.proof","signature":"` + strings.Repeat("A", 86) + `"}`, &HelloProof{}},
+		{`{"type":"hello","device_id":"02:00:00:00:00:01","pubkey":"AAEC","audio_params":` + audioParams + `,"capabilities":[]}`, &Hello{}},
 	}
 	for _, c := range cases {
 		got, err := DecodeUpstream([]byte(c.in))
@@ -194,6 +205,9 @@ func TestDecodeUpstreamRejectsBadInput(t *testing.T) {
 		"empty peer id":      `{"type":"proximity","peers":[{"device_id":"","strength":0.5}]}`,
 		"negative strength":  `{"type":"proximity","peers":[{"device_id":"b","strength":-0.1}]}`,
 		"strength > 1":       `{"type":"proximity","peers":[{"device_id":"b","strength":2}]}`,
+		"short signature":    `{"type":"hello.proof","signature":"AAAA"}`,
+		"non-b64 signature":  `{"type":"hello.proof","signature":"` + strings.Repeat("*", 86) + `"}`,
+		"bad pubkey":         `{"type":"hello","device_id":"02:00:00:00:00:01","pubkey":"***","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60},"capabilities":[]}`,
 		"too many peers":     `{"type":"proximity","peers":[` + strings.Join(tooManyPeers, ",") + `]}`,
 	}
 	for name, in := range cases {
@@ -216,7 +230,7 @@ func FuzzDecodeUpstream(f *testing.F) {
 
 func isUpstream(t string) bool {
 	switch t {
-	case TypeHello, TypeWake, TypeMicState, TypeProximity, TypeLocation, TypeMcp:
+	case TypeHello, TypeHelloProof, TypeWake, TypeMicState, TypeProximity, TypeLocation, TypeMcp:
 		return true
 	}
 	return false

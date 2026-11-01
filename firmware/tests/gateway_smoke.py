@@ -62,7 +62,8 @@ def gateway(server, url):
         port = reservation.getsockname()[1]
     with tempfile.TemporaryDirectory(prefix="palpable-firmware-") as directory:
         config = Path(directory) / "smoke.yaml"
-        config.write_text(f'addr: "127.0.0.1:{port}"\ndb_path: ":memory:"\n')
+        # 固件尚未实现认证握手（docs/trust.md §2），冒烟测试先关闭认证。
+        config.write_text(f'addr: "127.0.0.1:{port}"\ndb_path: ":memory:"\nauth:\n  enrollment: "off"\n')
         with (Path(directory) / "server.log").open("w+") as log:
             process = subprocess.Popen([str(server.resolve()), "-config", str(config)], stdout=log, stderr=log)
             try:

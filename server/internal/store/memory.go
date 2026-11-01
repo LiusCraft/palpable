@@ -16,6 +16,7 @@ import (
 type Memory struct {
 	mu          sync.Mutex
 	devices     map[id.DeviceID]Device
+	keys        map[id.DeviceID]DeviceKey
 	styles      map[string]Style
 	guardians   map[id.GuardianID]Guardian
 	friendships map[string]Friendship
@@ -29,6 +30,7 @@ var _ Store = (*Memory)(nil)
 func NewMemory() *Memory {
 	return &Memory{
 		devices:     map[id.DeviceID]Device{},
+		keys:        map[id.DeviceID]DeviceKey{},
 		styles:      map[string]Style{},
 		guardians:   map[id.GuardianID]Guardian{},
 		friendships: map[string]Friendship{},
@@ -41,6 +43,7 @@ func NewMemory() *Memory {
 func (m *Memory) Close() error { return nil }
 
 func (m *Memory) Devices() DeviceRepo         { return memDevices{m} }
+func (m *Memory) DeviceKeys() DeviceKeyRepo   { return memDeviceKeys{m} }
 func (m *Memory) Styles() StyleRepo           { return memStyles{m} }
 func (m *Memory) Guardians() GuardianRepo     { return memGuardians{m} }
 func (m *Memory) Friendships() FriendshipRepo { return memFriendships{m} }
@@ -440,4 +443,31 @@ func sortedValues[K comparable, V any](m map[K]V, cmp func(a, b V) int) []V {
 	}
 	slices.SortFunc(out, cmp)
 	return out
+}
+
+// ---- device_key ----
+
+type memDeviceKeys struct{ m *Memory }
+
+func (r memDeviceKeys) Get(_ context.Context, d id.DeviceID) (DeviceKey, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	k, ok := r.m.keys[d]
+	if !ok {
+		return DeviceKey{}, fmt.Errorf("get device key %s: %w", d, ErrNotFound)
+	}
+	k.PublicKey = slices.Clone(k.PublicKey)
+	return k, nil
+}
+
+func (r memDeviceKeys) Create(_ context.Context, k DeviceKey) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if _, ok := r.m.keys[k.Device]; ok {
+		return fmt.Errorf("create device key %s: %w", k.Device, ErrConflict)
+	}
+	k.PublicKey = slices.Clone(k.PublicKey)
+	k.CreatedAt = roundMillis(k.CreatedAt)
+	r.m.keys[k.Device] = k
+	return nil
 }

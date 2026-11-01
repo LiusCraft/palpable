@@ -5,6 +5,7 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -23,6 +24,8 @@ const (
 	writeTimeout = 5 * time.Second
 	maxTextBytes = 4 << 10
 	maxFrameSize = 4 << 10
+	// 顶号时等旧连接清理完的上限；超时则拒绝新连接，避免两条会话同时操作同一设备。
+	takeoverWait = 5 * time.Second
 )
 
 // Handler 由 app 实现，接收设备事件。OnAudio 是热路径。
@@ -33,10 +36,17 @@ type Handler interface {
 	OnDisconnect(s *Session)
 }
 
+// Authenticator 校验设备持有私钥；由 app 注入 device.Authenticator。
+type Authenticator interface {
+	Required() bool
+	Verify(ctx context.Context, d id.DeviceID, pubkey []byte, nonce string, sig []byte) error
+}
+
 // Gateway 管理所有设备会话。
 type Gateway struct {
 	handler  Handler
 	upgrader websocket.Upgrader
+	auth     Authenticator // nil 表示不认证
 
 	mu       sync.RWMutex
 	sessions map[id.DeviceID]*Session
@@ -53,6 +63,11 @@ func New(handler Handler, checkOrigin func(r *http.Request) bool) *Gateway {
 		sessions: make(map[id.DeviceID]*Session),
 	}
 }
+
+// SetAuth 须在开始接受连接前调用。
+func (g *Gateway) SetAuth(a Authenticator) { g.auth = a }
+
+func (g *Gateway) authRequired() bool { return g.auth != nil && g.auth.Required() }
 
 // Session 返回在线设备的会话。
 func (g *Gateway) Session(deviceID id.DeviceID) (*Session, bool) {
@@ -78,9 +93,12 @@ func (g *Gateway) run(ctx context.Context, ws *websocket.Conn) {
 	defer cancel()
 	defer ws.Close()
 
-	s := &Session{ws: ws, id: newSessionID(), ctx: ctx}
+	s := &Session{ws: ws, id: newSessionID(), ctx: ctx, done: make(chan struct{})}
+	// 最后执行：OnDisconnect 与 unregister 都完成后，顶号的新连接才继续。
+	defer close(s.done)
 
-	hello, err := readHello(ws)
+	deadline := time.Now().Add(helloTimeout)
+	hello, err := readHello(ws, deadline)
 	if err != nil {
 		_ = s.Send(errorMsg(protocol.CodeBadMessage, "first message must be a valid hello"))
 		slog.Warn("gateway handshake failed", "error", err)
@@ -91,7 +109,15 @@ func (g *Gateway) run(ctx context.Context, ws *websocket.Conn) {
 	s.firmware = hello.Firmware
 	s.capabilities = hello.Capabilities
 
-	if !g.register(s) {
+	if g.authRequired() {
+		if err := g.authenticate(ctx, s, hello, deadline); err != nil {
+			_ = s.Send(errorMsg(protocol.CodeUnauthorized, "authentication failed"))
+			slog.Warn("device authentication failed", "device_id", s.deviceID, "error", err)
+			return
+		}
+	}
+
+	if !g.register(s, g.authRequired()) {
 		_ = s.Send(errorMsg(protocol.CodeUnauthorized, "device already connected"))
 		return
 	}
@@ -124,8 +150,9 @@ func (g *Gateway) run(ctx context.Context, ws *websocket.Conn) {
 				_ = s.Send(errorMsg(protocol.CodeBadMessage, err.Error()))
 				continue
 			}
-			if _, isHello := msg.(*protocol.Hello); isHello {
-				_ = s.Send(errorMsg(protocol.CodeBadMessage, "hello already received"))
+			switch msg.(type) {
+			case *protocol.Hello, *protocol.HelloProof:
+				_ = s.Send(errorMsg(protocol.CodeBadMessage, "handshake already completed"))
 				continue
 			}
 			g.handler.OnMessage(s, msg)
@@ -133,18 +160,29 @@ func (g *Gateway) run(ctx context.Context, ws *websocket.Conn) {
 	}
 }
 
-func readHello(ws *websocket.Conn) (*protocol.Hello, error) {
-	_ = ws.SetReadDeadline(time.Now().Add(helloTimeout))
-	defer ws.SetReadDeadline(time.Time{})
-
-	mt, data, err := ws.ReadMessage()
+// authenticate 发挑战并校验签名；随机数每条连接一个，不依赖设备时钟。
+func (g *Gateway) authenticate(ctx context.Context, s *Session, hello *protocol.Hello, deadline time.Time) error {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return err
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(b)
+	if err := s.Send(&protocol.HelloChallenge{Type: protocol.TypeHelloChallenge, Nonce: nonce}); err != nil {
+		return err
+	}
+	msg, err := readText(s.ws, deadline)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if mt != websocket.TextMessage {
-		return nil, errors.New("hello must be a text frame")
+	proof, ok := msg.(*protocol.HelloProof)
+	if !ok {
+		return errors.New("expected hello.proof")
 	}
-	msg, err := protocol.DecodeUpstream(data)
+	return g.auth.Verify(ctx, s.deviceID, hello.PubKeyBytes(), nonce, proof.SignatureBytes())
+}
+
+func readHello(ws *websocket.Conn, deadline time.Time) (*protocol.Hello, error) {
+	msg, err := readText(ws, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -155,14 +193,47 @@ func readHello(ws *websocket.Conn) (*protocol.Hello, error) {
 	return hello, nil
 }
 
-func (g *Gateway) register(s *Session) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if _, exists := g.sessions[s.deviceID]; exists {
-		return false
+// readText 读一条握手阶段的文本消息。
+func readText(ws *websocket.Conn, deadline time.Time) (protocol.Message, error) {
+	_ = ws.SetReadDeadline(deadline)
+	defer ws.SetReadDeadline(time.Time{})
+
+	mt, data, err := ws.ReadMessage()
+	if err != nil {
+		return nil, err
 	}
-	g.sessions[s.deviceID] = s
-	return true
+	if mt != websocket.TextMessage {
+		return nil, errors.New("handshake message must be a text frame")
+	}
+	return protocol.DecodeUpstream(data)
+}
+
+// register 登记会话。takeover 时（仅在已认证的前提下）顶掉旧连接：等它的 OnDisconnect 与注销
+// 都做完再登记，避免旧会话的清理误伤新会话。
+func (g *Gateway) register(s *Session, takeover bool) bool {
+	for range 2 {
+		g.mu.Lock()
+		old, exists := g.sessions[s.deviceID]
+		if !exists {
+			g.sessions[s.deviceID] = s
+			g.mu.Unlock()
+			return true
+		}
+		g.mu.Unlock()
+		if !takeover {
+			return false
+		}
+		slog.Info("device reconnected, replacing old session", "device_id", s.deviceID, "old_session", old.id)
+		old.kick()
+		select {
+		case <-old.done:
+		case <-time.After(takeoverWait):
+			return false
+		case <-s.ctx.Done():
+			return false
+		}
+	}
+	return false
 }
 
 func (g *Gateway) unregister(s *Session) {
@@ -181,6 +252,7 @@ type Session struct {
 	firmware     string
 	capabilities []string
 	ctx          context.Context
+	done         chan struct{} // 会话彻底清理完时关闭
 
 	wmu sync.Mutex
 	ws  *websocket.Conn
@@ -205,6 +277,12 @@ func (s *Session) Send(msg protocol.Message) error {
 // SendAudio 发送一帧下行 Opus 音频。
 func (s *Session) SendAudio(frame []byte) error {
 	return s.write(websocket.BinaryMessage, frame)
+}
+
+// kick 通知设备被新连接顶替并断开；读循环随之退出并走正常的清理。
+func (s *Session) kick() {
+	_ = s.Send(errorMsg(protocol.CodeUnauthorized, "replaced by a new connection"))
+	_ = s.ws.Close()
 }
 
 func (s *Session) write(mt int, data []byte) error {
