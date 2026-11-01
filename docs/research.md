@@ -16,6 +16,7 @@
 | [皮套](#6-皮套与持续消费) | 强（形态） | Tonies 角色卡、Yoto 卡 | 皮套 = 外观 + 个性，不是内容 | 定价与复购验证 |
 | [订阅](#7-会员订阅) | 中 | Miko Max、Yoto Club | 好友对讲不耗 AI 成本 | 续费透明度、成本数据 |
 | [声纹登记](#8-声纹登记与儿童个人信息) | 弱（未找到同类） | — | — | **法务评估** |
+| [设备安全与同意流程](#9-设备安全与同意流程) | 强（行业惯例 + 已施行法规） | Matter、小智、Messenger Kids、ChatGPT 群聊 | 同意分两关（孩子 + 两家家长） | 已定，见 [trust.md](trust.md) |
 
 ---
 
@@ -46,9 +47,9 @@
 | 小天才自研「微聊」有家长审核与敏感词屏蔽，官方以此解释不对外开放 | [华尔街见闻](https://wallstreetcn.com/articles/3784044) |
 | 国标要求家长可管理应用使用时长、禁用应用，支付受家长端管控 | [科技日报](https://www.stdaily.com/web/gdxw/2026-06/22/content_535646.html) |
 
-**结论与需要你决策的点**
-- 行业惯例是**家长参与好友建立**。可感默认「先生效、后通知」更顺滑，但在家长看来是更宽松的默认值，也是评审最可能追问的一点。
-- 已有开关可切到「先确认」。要么路演时明确说出默认值与理由（孩子在公园当场连不上会放弃）并展示家长可随时解除；要么把默认改为先确认。这是产品决策，不是技术问题。
+**结论**
+- 行业惯例是**家长参与好友建立**。初评评委也追问了默认交友与同意流程。
+- 已决定（2026-11）：默认改为双方家长批准，每家可为自家孩子放宽为「自己交友、事后通知」，并加上孩子当场同意。调研见 [§9](#9-设备安全与同意流程)，规则见 [trust.md](trust.md#4-交朋友)。
 
 ## 3. AI 对话与内容安全
 
@@ -147,6 +148,52 @@
 - 声纹与音频的具体条款（单独同意、保存期限、删除）没有查到原文，不能代替法务判断。
 
 **待办**：法务评估；决定是否保留「引导智能体存音频」这个例外。
+
+## 9. 设备安全与同意流程
+
+> 检索于 2026-11，起因是初评反馈"默认交友、同意流程与设备认证边界需明确"。法规条文已打开原文核对的标「已核对」。决定见 [trust.md](trust.md)。
+
+### 9.1 设备身份与认证
+
+| 事实 | 来源 |
+| --- | --- |
+| ETSI EN 303 645（消费类 IoT 安全基线）第一条：不得使用通用默认密码，密码须每台设备唯一或由用户设置 | [jtsec 条款表](https://www.jtsec.es/files/table-requirements-and-provisions-ETSI-EN-303-645.pdf)、[TÜV SÜD](https://www.tuvsud.com/en-us/resource-centre/stories/why-using-universal-default-passwords-in-consumer-iot-products-is-a-bad-idea)（二手转述） |
+| Matter：每台设备出厂带唯一的设备证明证书（DAC），配网时控制端发挑战，设备用私钥证明持有；之后换发运营证书，用 CASE 建立双向认证会话 | [Matter 手册](https://handbook.buildwithmatter.com/howitworks/attestation/)、[Silicon Labs](https://docs.silabs.com/matter/1.0.4/matter-overview-guides/security)、[Espressif](https://developer.espressif.com/blog/matter-security-model/) |
+| ESP RainMaker：设备生成私钥与 CSR，经手机转给云端换取证书；用户与设备的关联要手机和设备两边各自向云端提交同一个随机密钥，云端比对一致才绑定 | [RainMaker 用户-设备映射](https://docs.rainmaker.espressif.com/docs/product_overview/concepts/user-node-mapping)、[RainMaker 配网规范](https://docs.espressif.com/projects/esp-rainmaker-neo-firmware/en/latest/specs/provisioning.html) |
+| ESP32-S3：DS 外设可做 RSA 签名而软件读不到私钥（密钥由 eFuse 中的 HMAC 密钥包裹）；Espressif 建议量产开启 Secure Boot 与每台设备独立密钥的 Flash 加密 | [ESP-IDF DS 文档](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32s3/api-reference/peripherals/ds.html)、[ESP-IDF 安全总览](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32s3/security/security.html) |
+| 小智：设备联网后播报 6 位验证码，用户在控制台输入完成绑定；设备侧保存 `hmac_key` 与激活状态 | [Waveshare 教程](https://www.waveshare.com/wiki/Xiaozhi_AI_Application_Tutorial)、[py-xiaozhi 激活流程](https://huangjunsen0406.github.io/py-xiaozhi/guide/设备激活流程.html) |
+
+**结论**：成熟做法都是**每台设备一把独有密钥 + 挑战应答**，再用**一个只在现场能拿到的短码**把设备绑定给人。可感照此设计：P-256 挑战应答 + 设备播报的 6 位绑定码。
+
+### 9.2 家长同意与好友
+
+| 事实 | 来源 |
+| --- | --- |
+| Messenger Kids：两种模式，"只有我能选好友"（家长在面板里加）或"孩子可以自己选"（每次通知家长）；两个孩子连接需要双方家长事先同意 | [Bark 指南](https://www.bark.us/?p=24492)、[TechCrunch](https://techcrunch.com/?p=1648121)、[Meta 帮助中心](https://fb.m.workplace.com/help/messenger-app/241428366975736)（检索摘要） |
+| Nintendo Switch 2：16 岁以下使用 GameChat 前必须在家长控制 App 设置；孩子申请和某个好友聊天时，家长逐个批准，可随时撤销 | [Nintendo 支持](https://en-americas-support.nintendo.com/app/answers/detail/a_id/68384) |
+| Xplora 儿童手表：联系人只能由管理员（家长）批准，最多 50 个；两块手表之间不能互发消息，只能在互为联系人时通话 | [Xplora 官方](https://shop.myxplora.com/blogs/news/approved-contacts-on-xplora-smartwatches)（厂商自述） |
+| 美国 COPPA 2025 修订：新增"短信 + 二次确认"、知识问答、证件比对等可验证家长同意方式；2026-04-22 起须合规 | [Hunton](https://www.hunton.com/privacy-and-cybersecurity-law-blog/ftc-publishes-final-coppa-rule-amendments)、[Jones Day](https://www.jonesday.com/en/insights/2025/05/ftc-finalizes-amendments-to-coppa--rule) |
+| 英国《适龄设计守则》：设置默认"高隐私"；地理定位默认关闭，除非有对孩子有利的充分理由 | [TechCrunch](https://techcrunch.com/2020/01/22/uk-watchdog-sets-out-age-appropriate-design-code-for-online-services-to-keep-kids-privacy-safe)、[Bird & Bird](https://www.twobirds.com/en/insights/2019/uk/ico-issues-new-guidelines-on-the-processing-of-childrens-data)（二手） |
+| 《国务院关于保障未成年人健康安全使用网络的规定（征求意见稿）》第四条：网络服务提供者不得向未成年人提供陌生人网络社交服务、虚拟亲属与虚拟伴侣等虚拟亲密关系服务；第十条要求智能终端制造者提供未成年人模式、退出核验、防绕过。**征求意见稿，2026-10-17 截止，尚未出台** | [网信办通知](https://www.cac.gov.cn/2026-09/18/c_1791482017777471.htm)（已核对第四、十条） |
+
+**结论**
+- 儿童产品的交友都由家长把关，区别只在"逐个批准"还是"放权后通知"。Messenger Kids 的"两家都点头、各家可放权"最贴近可感的场景（孩子在公园当面认识）。
+- 征求意见稿若出台，"陌生人网络社交"会被明确禁止。可感的好友只能由两个孩子当面贴近产生，没有搜索与推荐，加上家长关卡后，更容易说明它不属于陌生人社交；正式文本出台后需法务确认。
+
+### 9.3 AI 陪伴与群聊
+
+| 事实 | 来源 |
+| --- | --- |
+| 《人工智能拟人化互动服务管理暂行办法》2026-07-15 施行。第二条：适用于模拟人格、提供持续情感陪伴的服务；第十四条：不得向未成年人提供虚拟亲属、虚拟伴侣服务，向不满 14 周岁提供其他拟人化互动服务须取得监护人同意，须有未成年人模式并支持监护人"屏蔽特定角色"等；第十七条：处理不满 14 周岁个人信息须监护人同意；第十八条：提示用户正在与 AI 互动，连续使用每超过 2 小时提醒；第十三条：自伤自杀等极端情境须干预并联系监护人；第十六条：交互数据可复制、删除，未经单独同意不得用于训练 | [网信办原文](https://www.cac.gov.cn/2026-04/10/c_1777558395078289.htm)（已核对）、[司法部](https://www.moj.gov.cn/pub/sfbgw/flfggz/flfggzbmgz/202607/t20260729_537998.html) |
+| ChatGPT 群聊：可关闭自动回复，关闭后只在被 @ 时回复；每个群可设置回复风格 | [OpenAI 帮助中心](https://help.openai.com/en/articles/12703475-group-chats-in-chatgpt) |
+| Snapchat Family Center：家长可关闭青少年的 My AI，关闭后机器人只回复"已停用" | [CNN 转载](https://citizen.digital/article/snapchat-to-let-parents-decide-whether-their-teens-can-use-the-apps-ai-chatbot-n334601) |
+| 加州 SB 243（2026-01-01 生效）：已知用户未成年时，须披露对方是 AI，并定期提醒休息 | [FPF](https://fpf.org/blog/understanding-the-new-wave-of-chatbot-legislation-california-sb-243-and-beyond/)（二手；提醒间隔未核对原文） |
+
+**结论**
+- 可感的小伙伴是持续陪伴、有名字和性格的 AI，**落在《拟人化互动服务办法》的适用范围内**。监护人事先同意、AI 身份提示、2 小时提醒、家长屏蔽角色，都是法定义务，不是加分项。
+- 群聊里的 AI 业内常用"被点名才说话"，对孩子更可预期，也避免 AI 收听别家孩子的话。
+
+**待办**：法务确认可感的"朋友"定位不构成虚拟亲密关系；极端情境识别依赖灵矽，需要确认能力。
 
 ---
 
