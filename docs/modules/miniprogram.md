@@ -50,4 +50,4 @@ call():      带 Bearer 发请求；401 → 清本地令牌、signIn()、重试�
 - 页面可见文字都来自 `utils/copy.ts`；WXML 不能调用函数，带参数的文案在 `.ts` 里算好再 `setData`（`texts()` 去掉函数）。
 - 项目根是 `miniprogram/`（有 `project.config.json` 的那层），源码在 `src/`。开发者工具必须导入项目根：导入 `src/` 会自动生成一份不开 TypeScript 编译的配置，运行时报 `module 'components/x/index.js' is not defined`。
 - `pnpm check` = `tsc --noEmit` + `scripts/lint.mjs`（JSON 可解析、WXML 用到的组件已注册、相对路径的组件文件存在、模板里不调函数、引用的资源存在、文案不索要个人信息）。
-- `pnpm build:npm` 用 `miniprogram-ci` 构建 `miniprogram_npm`，不开开发者工具也能打包。
+- `miniprogram_npm` 由开发者工具"工具 → 构建 npm"生成，不入库；CI 只装 `typescript` 与类型定义跑 `pnpm check`，不需要构建 npm。

@@ -7,11 +7,10 @@
 ```bash
 cd miniprogram
 pnpm install          # nodeLinker: hoisted，开发者工具的"构建 npm"才认得
-pnpm build:npm        # 生成 src/miniprogram_npm（也可在开发者工具里"工具 → 构建 npm"）
 pnpm check            # tsc + WXML/JSON 静态检查
 ```
 
-用微信开发者工具导入 **`miniprogram/` 这一层**（有 `project.config.json` 的目录，AppID 已写在里面），不要导入 `src/`：那样开发者工具会另生成一份不开 TypeScript 编译的配置，组件全部报 `module ... is not defined`。
+用微信开发者工具导入 **`miniprogram/` 这一层**（有 `project.config.json` 的目录，AppID 已写在里面），不要导入 `src/`：那样开发者工具会另生成一份不开 TypeScript 编译的配置，组件全部报 `module ... is not defined`。导入后先点"工具 → 构建 npm"生成 `src/miniprogram_npm`（TDesign 组件），之后改了依赖再构建一次。
 
 **连本地服务端：**
 
