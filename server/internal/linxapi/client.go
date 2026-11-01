@@ -60,6 +60,11 @@ type Client interface {
 	CreateSpeaker(ctx context.Context, name string) (speakerID string, err error)
 	EnrollVoiceprint(ctx context.Context, speakerID, audioURL string) error
 	BindSpeakers(ctx context.Context, agentID string, speakerIDs []string) error
+	// BoundSpeakers 返回智能体当前绑定的说话人（声纹 V2 的 speaker-config）。
+	BoundSpeakers(ctx context.Context, agentID string) ([]string, error)
+	// DeleteVoiceprint 删除说话人的声纹；DeleteSpeaker 删除说话人本身，仍被智能体绑定时平台会拒绝。
+	DeleteVoiceprint(ctx context.Context, speakerID string) error
+	DeleteSpeaker(ctx context.Context, speakerID string) error
 	SetOwnerOnly(ctx context.Context, agentID string, on bool) error
 	RecentVoiceSamples(ctx context.Context, agentID string) ([]VoiceSample, error)
 	Sessions(ctx context.Context, agentID string, page, limit int) ([]Session, error)
@@ -392,6 +397,24 @@ func (c *HTTPClient) CreateSpeaker(ctx context.Context, name string) (string, er
 
 func (c *HTTPClient) EnrollVoiceprint(ctx context.Context, speakerID, audioURL string) error {
 	return c.do(ctx, http.MethodPost, "/v1/speakers/"+url.PathEscape(speakerID)+"/voiceprint", map[string]any{"audio_url": audioURL}, nil)
+}
+
+func (c *HTTPClient) BoundSpeakers(ctx context.Context, agentID string) ([]string, error) {
+	var res struct {
+		SpeakerIDs []string `json:"speaker_ids"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/agents/"+url.PathEscape(agentID)+"/speaker-config", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.SpeakerIDs, nil
+}
+
+func (c *HTTPClient) DeleteVoiceprint(ctx context.Context, speakerID string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/speakers/"+url.PathEscape(speakerID)+"/voiceprint", nil, nil)
+}
+
+func (c *HTTPClient) DeleteSpeaker(ctx context.Context, speakerID string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/speakers/"+url.PathEscape(speakerID), nil, nil)
 }
 
 func (c *HTTPClient) BindSpeakers(ctx context.Context, agentID string, speakerIDs []string) error {

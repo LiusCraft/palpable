@@ -402,3 +402,56 @@ func TestDeviceAgentSettings(t *testing.T) {
 		}
 	})
 }
+
+func TestGuardianAccounts(t *testing.T) {
+	run(t, func(t *testing.T, ctx context.Context, s Store) {
+		gr := s.Guardians()
+		_, err := gr.ByWxOpenID(ctx, "")
+		wantErr(t, err, ErrNotFound)
+		must(t, gr.Create(ctx, Guardian{ID: "g1", WxOpenID: "o1", CreatedAt: t0}))
+		wantErr(t, gr.Create(ctx, Guardian{ID: "g1", WxOpenID: "o2", CreatedAt: t0}), ErrConflict)
+		wantErr(t, gr.Create(ctx, Guardian{ID: "g2", WxOpenID: "o1", CreatedAt: t0}), ErrConflict)
+		// 多个非微信家长（openid 为空）不互相冲突。
+		must(t, gr.Create(ctx, Guardian{ID: "d1", CreatedAt: t0}))
+		must(t, gr.Create(ctx, Guardian{ID: "d2", CreatedAt: t0}))
+
+		g, err := gr.ByWxOpenID(ctx, "o1")
+		must(t, err)
+		if g.ID != "g1" || !g.CreatedAt.Equal(t0.Truncate(time.Millisecond)) {
+			t.Fatalf("by openid = %+v", g)
+		}
+		must(t, gr.Put(ctx, Guardian{ID: "g1", DisplayName: "妈妈", WxOpenID: "o1", CreatedAt: t0.Add(time.Hour)}))
+		g, err = gr.Get(ctx, "g1")
+		must(t, err)
+		if g.DisplayName != "妈妈" || !g.CreatedAt.Equal(t0.Truncate(time.Millisecond)) {
+			t.Fatalf("put changed created_at or lost name: %+v", g)
+		}
+		wantErr(t, gr.Put(ctx, Guardian{ID: "d1", WxOpenID: "o1"}), ErrConflict)
+
+		ss := s.Sessions()
+		must(t, ss.Create(ctx, Session{TokenHash: "h1", Guardian: "g1", CreatedAt: t0, ExpiresAt: t0.Add(time.Hour)}))
+		must(t, ss.Create(ctx, Session{TokenHash: "h2", Guardian: "g1", CreatedAt: t0, ExpiresAt: t0.Add(2 * time.Hour)}))
+		must(t, ss.Create(ctx, Session{TokenHash: "h3", Guardian: "d1", CreatedAt: t0, ExpiresAt: t0.Add(time.Minute)}))
+		wantErr(t, ss.Create(ctx, Session{TokenHash: "h1", Guardian: "d1"}), ErrConflict)
+		got, err := ss.Get(ctx, "h1")
+		must(t, err)
+		if got.Guardian != "g1" || !got.ExpiresAt.Equal(t0.Add(time.Hour).Truncate(time.Millisecond)) {
+			t.Fatalf("session = %+v", got)
+		}
+		n, err := ss.DeleteExpired(ctx, t0.Add(time.Minute))
+		must(t, err)
+		if n != 1 {
+			t.Fatalf("expired deleted = %d, want 1", n)
+		}
+		must(t, ss.Delete(ctx, "h1"))
+		wantErr(t, ss.Delete(ctx, "h1"), ErrNotFound)
+
+		// 删除家长时连同会话一起删。
+		must(t, gr.Delete(ctx, "g1"))
+		wantErr(t, gr.Delete(ctx, "g1"), ErrNotFound)
+		_, err = ss.Get(ctx, "h2")
+		wantErr(t, err, ErrNotFound)
+		_, err = gr.ByWxOpenID(ctx, "o1")
+		wantErr(t, err, ErrNotFound)
+	})
+}

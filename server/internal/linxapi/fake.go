@@ -9,21 +9,23 @@ import (
 
 // Fake 是内存里的灵矽，供上层模块测试；行为对齐 HTTPClient 的约定。
 type Fake struct {
-	mu          sync.Mutex
-	Agents      map[string]AgentSpec // id → spec
-	Devices     map[string]string    // mac → agent id
-	Memories    map[string]string    // agent id → memory id
-	Attentions  map[string]string    // memory id + "/" + name → attention id
-	Values      map[string]string    // memory id/mac/attention id → value
-	Nodes       map[string][]string  // memory id/mac → contents
-	Speakers    map[string]string    // speaker id → audio url
-	Samples     map[string][]VoiceSample
-	Bound       map[string][]string
-	Messages    map[string][]Message // agent id → 一个会话的全部消息
-	FailCreate  error                // 非 nil 时 CreateAgent 返回它
-	FailPrereg  error
-	SwitchCalls []string
-	seq         int
+	mu              sync.Mutex
+	Agents          map[string]AgentSpec // id → spec
+	Devices         map[string]string    // mac → agent id
+	Memories        map[string]string    // agent id → memory id
+	Attentions      map[string]string    // memory id + "/" + name → attention id
+	Values          map[string]string    // memory id/mac/attention id → value
+	Nodes           map[string][]string  // memory id/mac → contents
+	Speakers        map[string]string    // speaker id → audio url
+	Samples         map[string][]VoiceSample
+	Bound           map[string][]string
+	DeletedSpeakers []string             // DeleteSpeaker 调用顺序
+	FailDelete      error                // 非 nil 时 DeleteVoiceprint / DeleteSpeaker 返回它
+	Messages        map[string][]Message // agent id → 一个会话的全部消息
+	FailCreate      error                // 非 nil 时 CreateAgent 返回它
+	FailPrereg      error
+	SwitchCalls     []string
+	seq             int
 }
 
 func NewFake() *Fake {
@@ -155,6 +157,41 @@ func (f *Fake) BindSpeakers(_ context.Context, agentID string, ids []string) err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Bound[agentID] = ids
+	return nil
+}
+
+func (f *Fake) BoundSpeakers(_ context.Context, agentID string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.Bound[agentID]...), nil
+}
+
+func (f *Fake) DeleteVoiceprint(_ context.Context, speakerID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.FailDelete != nil {
+		return f.FailDelete
+	}
+	delete(f.Speakers, speakerID)
+	return nil
+}
+
+// DeleteSpeaker 与平台一致：仍被某个智能体绑定时拒绝。
+func (f *Fake) DeleteSpeaker(_ context.Context, speakerID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.FailDelete != nil {
+		return f.FailDelete
+	}
+	for agent, ids := range f.Bound {
+		for _, s := range ids {
+			if s == speakerID {
+				return &APIError{Path: "/v1/speakers/" + speakerID, Code: 400, Msg: "speaker bound to agent " + agent}
+			}
+		}
+	}
+	delete(f.Speakers, speakerID)
+	f.DeletedSpeakers = append(f.DeletedSpeakers, speakerID)
 	return nil
 }
 

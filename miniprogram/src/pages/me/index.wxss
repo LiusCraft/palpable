@@ -1,0 +1,22 @@
+.profile { display: flex; align-items: center; gap: 28rpx; }
+.profile .grow { display: flex; flex-direction: column; gap: 6rpx; }
+.list { padding: 8rpx 0; overflow: hidden; }
+.list t-cell { --td-cell-bg-color: transparent; }
+.contact {
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  line-height: inherit;
+  text-align: left;
+  border-radius: 0;
+  font-size: inherit;
+}
+.contact::after { border: none; }
+.danger { color: var(--berry) !important; }
+.name-input {
+  margin-top: 24rpx;
+  border-radius: 24rpx;
+  background: var(--cream);
+  --td-input-bg-color: var(--cream);
+}
+.foot { text-align: center; margin-top: 24rpx; line-height: 1.8; }

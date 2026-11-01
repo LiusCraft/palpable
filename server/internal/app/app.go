@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LiusCraft/palpable/server/internal/account"
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
 	"github.com/LiusCraft/palpable/server/internal/bridge/mcp"
 	"github.com/LiusCraft/palpable/server/internal/channel"
@@ -28,6 +29,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/share"
 	"github.com/LiusCraft/palpable/server/internal/store"
 	"github.com/LiusCraft/palpable/server/internal/voice"
+	"github.com/LiusCraft/palpable/server/internal/wechat"
 	"github.com/LiusCraft/palpable/server/internal/world"
 	"github.com/LiusCraft/palpable/server/internal/zone"
 )
@@ -66,6 +68,8 @@ type App struct {
 	history *history.History
 	world   *world.World // 仅演示模式
 	gw      *gateway.Gateway
+	// accounts 是微信登录的家长账号；未配置小程序时为 nil，家长端只认演示令牌。
+	accounts *account.Accounts
 
 	// requireBind 为 true 时未绑定家长的设备不提供任何服务，见 docs/trust.md §3。
 	requireBind bool
@@ -88,6 +92,8 @@ type deps struct {
 	enrollment device.Enrollment
 	// requireBind 在产品里总为 true；测试默认 false，只有绑定相关的用例打开。
 	requireBind bool
+	// wx 为 nil 时不开放微信登录。
+	wx wechat.Client
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -104,6 +110,10 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		// 不接灵矽时设备档案在本地开通，频道对讲照常可用。
 		d.linx = linxapi.NewFake()
 		slog.Warn("linx.ws_url not set, AI conversation disabled")
+	}
+	if cfg.WeChat.Enabled() {
+		d.wx = wechat.New(cfg.WeChat.AppID, cfg.WeChat.Secret, cfg.WeChat.APIBase)
+		slog.Info("wechat login enabled", "app_id", cfg.WeChat.AppID)
 	}
 	a, err := newApp(ctx, d)
 	if err != nil {
@@ -129,6 +139,9 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 	a := &App{demo: d.demo, store: d.store, catalog: catalog, devices: device.New(d.store.Devices(), catalog, d.linx),
 		ai: d.ai, rel: rel, chans: chans, zones: zone.New(chans, zone.Park), requireBind: d.requireBind}
 	a.binder = device.NewBinder(a.devices)
+	if d.wx != nil {
+		a.accounts = account.New(d.store.Guardians(), d.store.Sessions(), d.wx)
+	}
 	rel.SetAutoApprove(a.devices.AutoApproveFriends)
 	var aiPort voice.AI = noAI{}
 	if d.ai != nil {
@@ -189,6 +202,9 @@ func (a *App) Start(ctx context.Context) {
 	go a.bindEvents(ctx)
 	go a.sweepGroups(ctx)
 	go a.sweepFriends(ctx)
+	if a.accounts != nil {
+		go a.sweepSessions(ctx)
+	}
 }
 
 func (a *App) Close() error { return a.store.Close() }
@@ -200,11 +216,13 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("/world", a.world)
 		mux.HandleFunc("POST /world/tool", a.demoTool)
 	}
-	if a.demo.ParentToken != "" && a.demo.Guardian != "" {
+	if auth := a.parentAuth(); auth != nil {
 		online := func(d id.DeviceID) bool { _, ok := a.gw.Session(d); return ok }
-		api := parentapi.New(parentapi.FixedToken(a.demo.ParentToken, id.GuardianID(a.demo.Guardian)),
-			a.devices, a.rel, a.chans, a.history, online)
+		api := parentapi.New(auth, a.devices, a.rel, a.chans, a.history, online)
 		api.EnableBinding(a)
+		if a.accounts != nil {
+			api.EnableAccounts(accountAPI{Accounts: a.accounts, app: a})
+		}
 		mux.Handle("/api/", api)
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {

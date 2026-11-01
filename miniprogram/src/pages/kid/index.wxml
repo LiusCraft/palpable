@@ -1,0 +1,153 @@
+<view class="page">
+  <view class="card hero" style="background:{{tint}}">
+    <plush-avatar skin="{{kid.skin}}" size="{{176}}" status="{{kid ? (kid.online ? 'online' : 'offline') : ''}}" />
+    <view class="grow hero-info">
+      <view class="h1 ellipsis">{{dollName}}</view>
+      <view class="muted">{{owner}}</view>
+      <view wx:if="{{kid}}" class="pill {{kid.online ? 'on' : 'off'}} hero-pill"><text class="dot" />{{kid.online ? t.common.online : t.common.offline}}</view>
+    </view>
+  </view>
+
+  <t-tabs value="{{tab}}" bind:change="onTab" t-class="tabs" theme="tag" space-evenly>
+    <t-tab-panel label="{{t.kid.tabs.today}}" value="today" />
+    <t-tab-panel label="{{t.kid.tabs.friends}}{{askYou.length ? ' · ' + askYou.length : ''}}" value="friends" />
+    <t-tab-panel label="{{t.kid.tabs.settings}}" value="settings" />
+  </t-tabs>
+
+  <view wx:if="{{loading}}" class="empty"><t-loading theme="dots" size="64rpx" /></view>
+
+  <!-- 今天 -->
+  <block wx:elif="{{tab === 'today'}}">
+    <view class="section-title"><text class="h3 marker">{{t.kid.where}}</text></view>
+    <view class="card">
+      <view wx:if="{{!groups.length}}" class="muted">{{t.kid.nowhere}}</view>
+      <view wx:for="{{groups}}" wx:key="id" class="group {{index ? 'line' : ''}}">
+        <view class="group-icon {{item.kind}}"><t-icon name="{{item.kind === 'zone' ? 'location' : 'chat-bubble'}}" size="36rpx" /></view>
+        <view class="grow">
+          <view class="h3 ellipsis">{{item.name}}</view>
+          <view class="muted" data-code="{{item.code}}" bindtap="copyCode">{{item.label}} · {{item.membersText}}</view>
+        </view>
+        <text wx:if="{{item.foreground}}" class="pill on">{{t.kid.foreground}}</text>
+      </view>
+    </view>
+
+    <view class="section-title"><text class="h3 marker">{{t.kid.met}}</text></view>
+    <view class="card">
+      <view wx:if="{{!digest.met.length}}" class="muted">{{t.kid.metEmpty}}</view>
+      <view class="chips">
+        <view wx:for="{{digest.met}}" wx:key="index" class="chip">
+          <text class="chip-name">{{item.name}}</text><text class="faint">{{item.time}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section-title"><text class="h3 marker">{{t.kid.shared}}</text></view>
+    <view class="card">
+      <view wx:if="{{!digest.shared.length}}" class="muted">{{t.kid.sharedEmpty}}</view>
+      <view wx:for="{{digest.shared}}" wx:key="index" class="shared {{index ? 'line' : ''}}">
+        <view class="row"><text class="h3">{{item.name}}</text><text class="faint shared-time">{{item.time}}</text></view>
+        <view class="shared-text">{{item.text}}</view>
+      </view>
+    </view>
+
+    <view class="section-title"><text class="h3 marker">{{t.kid.chats}}</text></view>
+    <view class="card chats">
+      <view wx:if="{{!digest.chats.length}}" class="muted">{{t.kid.chatsEmpty}}</view>
+      <view wx:for="{{digest.chats}}" wx:key="index" class="bubble-row {{item.kid ? 'mine' : ''}}">
+        <plush-avatar wx:if="{{!item.kid}}" skin="{{kid.skin}}" size="{{64}}" />
+        <view class="bubble">
+          <view class="bubble-who faint">{{item.kid ? t.kid.kidSays : dollName}} · {{item.time}}</view>
+          <text user-select>{{item.text}}</text>
+        </view>
+      </view>
+      <view wx:if="{{digest.chats.length}}" class="faint chats-note">{{t.kid.chatsNote}}</view>
+    </view>
+  </block>
+
+  <!-- 朋友 -->
+  <block wx:elif="{{tab === 'friends'}}">
+    <block wx:if="{{askYou.length}}">
+      <view class="section-title"><text class="h3 marker">{{t.kid.pending}}</text></view>
+      <view wx:for="{{askYou}}" wx:key="request_id" class="card ask">
+        <view class="row">
+          <view class="ask-icon"><t-icon name="heart-filled" size="40rpx" color="#EF5B75" /></view>
+          <view class="grow">
+            <view class="h3">{{item.name}}</view>
+            <view class="muted">{{t.kid.pendingHint}}</view>
+          </view>
+        </view>
+        <view class="ask-actions">
+          <t-button theme="light" shape="round" size="medium" data-device="{{item.device_id}}" data-name="{{item.name}}" bind:tap="decline">{{t.kid.decline}}</t-button>
+          <t-button theme="primary" shape="round" size="medium" loading="{{busy === item.request_id}}" data-req="{{item.request_id}}" bind:tap="approve">{{t.kid.approve}}</t-button>
+        </view>
+      </view>
+    </block>
+
+    <view class="section-title"><text class="h3 marker">{{t.kid.friends}}</text></view>
+    <view class="card">
+      <view wx:if="{{!friends.length && !askOther.length}}" class="empty">
+        <image class="empty-art" src="/assets/illus/gift.svg" mode="widthFix" aria-hidden="true" />
+        <view class="empty-text">{{t.kid.friendsEmpty}}</view>
+      </view>
+      <view wx:for="{{askOther}}" wx:key="request_id" class="friend line-after">
+        <view class="friend-dot wait"><t-icon name="time" size="32rpx" /></view>
+        <view class="grow">
+          <view class="h3 ellipsis">{{item.name}}</view>
+          <view class="muted">{{t.kid.waitingOther}}</view>
+        </view>
+      </view>
+      <view wx:for="{{friends}}" wx:key="request_id" class="friend {{index ? 'line' : ''}}" data-device="{{item.device_id}}" bindtap="friendMenu">
+        <view class="friend-dot {{item.online ? 'on' : ''}}"><t-icon name="user-talk" size="32rpx" /></view>
+        <view class="grow">
+          <view class="row"><text class="h3 ellipsis">{{item.name}}</text></view>
+          <view class="faint">{{item.sinceText}}</view>
+          <view class="tags">
+            <text wx:if="{{item.auto}}" class="pill sky">{{t.kid.autoTag}}</text>
+            <text wx:if="{{item.agent_blocked}}" class="pill off">{{t.kid.agentBlockedTag}}</text>
+          </view>
+        </view>
+        <t-icon name="ellipsis" size="40rpx" color="#B9A895" />
+      </view>
+    </view>
+  </block>
+
+  <!-- 设置 -->
+  <block wx:else>
+    <view class="section-title"><text class="h3 marker">{{t.kid.policyTitle}}</text></view>
+    <view class="card">
+      <t-radio-group value="{{settings.friend_policy}}" bind:change="onPolicy" borderless>
+        <t-radio value="approve" label="{{t.kid.policyApprove}}" content="{{t.kid.policyApproveDesc}}" icon="dot" t-class="radio" />
+        <t-radio value="notify" label="{{t.kid.policyNotify}}" content="{{t.kid.policyNotifyDesc}}" icon="dot" t-class="radio" />
+      </t-radio-group>
+    </view>
+
+    <view class="card row">
+      <view class="grow setting-text">
+        <view class="h3">{{t.kid.agentTitle}}</view>
+        <view class="muted">{{t.kid.agentDesc}}</view>
+      </view>
+      <t-switch value="{{settings.agent_in_channel}}" bind:change="onAgent" aria-label="{{t.kid.agentTitle}}" />
+    </view>
+
+    <view class="card row">
+      <view class="grow setting-text">
+        <view class="h3">{{t.kid.voiceTitle}}</view>
+        <view class="muted">{{voiceHint}}</view>
+      </view>
+      <t-switch value="{{settings.voice_consent}}" disabled="{{!settings.voice_consent && !settings.voice_can_enable}}"
+                bind:change="onVoice" aria-label="{{t.kid.voiceTitle}}" />
+    </view>
+
+    <view class="card danger">
+      <view class="h3">{{t.kid.dangerTitle}}</view>
+      <view class="muted danger-text">{{t.kid.dangerDesc}}</view>
+      <t-button theme="danger" variant="outline" shape="round" size="large" block bind:tap="unbind">{{t.kid.unbindConfirm}}</t-button>
+    </view>
+  </block>
+</view>
+
+<t-dialog visible="{{dialog.visible}}" title="{{dialog.title}}" content="{{dialog.content}}"
+          confirm-btn="{{ { content: dialog.confirm, theme: 'danger', variant: 'base' } }}"
+          cancel-btn="{{t.common.cancel}}" bind:confirm="onDialogConfirm" bind:cancel="closeDialog" />
+<privacy-sheet />
+<t-toast id="t-toast" />

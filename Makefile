@@ -1,4 +1,4 @@
-.PHONY: gen gen-check fmt-check build lint test vet cover check dev-server dev-web firmware-prepare firmware-test firmware-smoke
+.PHONY: gen gen-check fmt-check build lint test vet cover check miniprogram-check dev-server dev-web firmware-prepare firmware-test firmware-smoke
 
 # PR 要求的后端单测覆盖率下限
 MIN_COVERAGE ?= 90
@@ -37,8 +37,12 @@ cover:
 	cd server && go test -covermode=atomic -coverpkg=./internal/... -coverprofile=coverage.out ./internal/...
 	cd server && ../.github/scripts/check-coverage.sh coverage.out $(MIN_COVERAGE)
 
+# 家长端小程序：tsc + WXML/JSON 静态检查
+miniprogram-check:
+	cd miniprogram && pnpm check
+
 # 每次改动后的完整检查
-check: gen-check fmt-check lint vet cover build
+check: gen-check fmt-check lint vet cover build miniprogram-check
 
 dev-server:
 	cd server && go run ./cmd/palpabled

@@ -1,0 +1,51 @@
+<view class="hero" style="padding-top:{{topPad}}px">
+  <image class="hero-sky" src="/assets/illus/clouds.svg" mode="widthFix" aria-hidden="true" />
+  <view class="nav" style="height:{{navHeight}}px">
+    <view class="nav-me" bindtap="openMe" aria-role="button" aria-label="{{t.home.me}}">
+      <t-icon name="user-circle" size="40rpx" />
+      <text>{{t.home.me}}</text>
+    </view>
+  </view>
+  <view class="hello">
+    <view class="hello-line">{{greeting}}{{name ? '，' + name : ''}}</view>
+    <view class="h1"><text class="marker">{{t.home.title}}</text></view>
+  </view>
+</view>
+
+<view class="page body">
+  <view wx:if="{{loading}}" class="empty"><t-loading theme="dots" size="64rpx" /></view>
+
+  <view wx:elif="{{!kids.length && !failed}}" class="card welcome">
+    <image class="welcome-art" src="/assets/illus/gift.svg" mode="widthFix" aria-hidden="true" />
+    <view class="h2">{{t.home.emptyTitle}}</view>
+    <view class="muted welcome-text">{{t.home.emptyBody}}</view>
+    <t-button theme="primary" size="large" block t-class="btn-chunky" bind:tap="onBindTap">{{t.home.bindFirst}}</t-button>
+  </view>
+
+  <view wx:if="{{failed}}" class="card empty">
+    <image class="fail-art" src="/assets/plush/egg.svg" mode="aspectFit" aria-hidden="true" />
+    <view class="empty-text">{{failed}}</view>
+    <t-button theme="light" shape="round" size="medium" bind:tap="load">{{t.common.retry}}</t-button>
+  </view>
+
+  <view wx:for="{{kids}}" wx:key="id" class="card kid" style="background:{{item.tint}}" data-id="{{item.id}}" bindtap="openKid">
+    <plush-avatar skin="{{item.skin}}" size="{{148}}" status="{{item.online ? 'online' : 'offline'}}" />
+    <view class="grow kid-info">
+      <view class="row">
+        <text class="h2 ellipsis">{{item.doll_name}}</text>
+        <text class="pill {{item.online ? 'on' : 'off'}} kid-state"><text class="dot" />{{item.online ? t.common.online : t.common.offline}}</text>
+      </view>
+      <view class="muted ellipsis">{{item.owner}}</view>
+      <view wx:if="{{item.badge}}" class="pill {{item.badgeAlert ? 'alert' : ''}} kid-badge">{{item.badge}}</view>
+    </view>
+    <t-icon name="chevron-right" size="44rpx" color="#B9A895" />
+  </view>
+
+  <view wx:if="{{kids.length}}" class="add" bindtap="bind" aria-role="button">
+    <t-icon name="add-circle" size="44rpx" />
+    <text>{{t.home.bindMore}}</text>
+  </view>
+</view>
+
+<privacy-sheet visible="{{needPrivacy}}" bind:agree="onPrivacyAgree" bind:disagree="onPrivacyDisagree" />
+<t-toast id="t-toast" />

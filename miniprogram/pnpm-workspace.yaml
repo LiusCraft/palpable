@@ -1,0 +1,2 @@
+# 微信开发者工具的"构建 npm"不认 pnpm 的符号链接，用平铺的 node_modules。
+nodeLinker: hoisted

@@ -101,6 +101,7 @@ ai.Say(d, 「<孩子名>，我是<小伙伴名>」)
 ## 其他职责
 
 - 启动后台任务：`ensureCatalog`（指数退避，5s 起、上限 5min，直到灵矽侧智能体就绪）、`sweepGroups`（每分钟）、各事件循环、`voice.Run`。
-- 路由：`/ws`、`/healthz`；`/api/`（需 `demo.parent_token` + `demo.guardian`）；`/world` 与 `POST /world/tool`（需 `demo.world`）。
+- 路由：`/ws`、`/healthz`；`/api/`（需 `wechat.app_id` + `wechat.secret`，或 `demo.parent_token` + `demo.guardian`，见 [parentapi](parentapi.md#约束)）；`/world` 与 `POST /world/tool`（需 `demo.world`）。
+- 家长账号：配置了 `wechat` 时创建 [account](account.md)，每小时清过期会话；实现 `parentapi.Accounts.DeleteAccount`（逐台 `Unbind` 名下设备后删账号）。
 - 未配置灵矽：`ai == nil`，`linxapi` 用内存 `Fake`；设备档案本地开通，频道对讲照常。
 - 向离线设备下发消息直接丢弃；设备上线后从档案与频道状态重新得到所需信息。

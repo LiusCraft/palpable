@@ -21,11 +21,16 @@ type Config struct {
     Addr   string // 默认 ":8080"
     DBPath string // SQLite 文件，默认 "palpable.db"
     Auth   Auth
+    WeChat WeChat
     Linx   Linx
     Demo   Demo
 }
 type Auth struct {
     Enrollment string   // open（默认）| manifest | off，见 docs/trust.md §2.3
+}
+type WeChat struct {
+    AppID, Secret string   // 两者都填才开放微信登录；Secret 只在这个文件里
+    APIBase string         // 默认 https://api.weixin.qq.com，测试用
 }
 type Linx struct {
     WSURL, Token, APIBase, OTAURL, VoiceprintBase string   // WSURL 为空 = 不启用 AI
@@ -45,5 +50,5 @@ func (l Linx) Enabled() bool        // WSURL != ""
 
 ## 约束
 
-- `web/` 与提交历史中不得出现 `linx.token` 等密钥。
+- `web/`、`miniprogram/` 与提交历史中不得出现 `linx.token`、`wechat.secret` 等密钥（小程序 AppID 不是密钥，可以出现在 `project.config.json`）。
 - 配置只在启动时读取一次，由 `app.Run` 分发给各模块。

@@ -15,6 +15,7 @@ type Config struct {
 	Addr   string `yaml:"addr"`
 	DBPath string `yaml:"db_path"` // SQLite 文件
 	Auth   Auth   `yaml:"auth"`
+	WeChat WeChat `yaml:"wechat"`
 	Linx   Linx   `yaml:"linx"`
 	Demo   Demo   `yaml:"demo"`
 }
@@ -24,6 +25,16 @@ type Auth struct {
 	// Enrollment：open（首次上线登记公钥，默认）| manifest（只认出厂清单）| off（不认证，仅供固件过渡）。
 	Enrollment string `yaml:"enrollment"`
 }
+
+// WeChat 是家长端小程序的登录配置；AppSecret 只允许出现在这个文件里。
+type WeChat struct {
+	AppID   string `yaml:"app_id"`
+	Secret  string `yaml:"secret"`
+	APIBase string `yaml:"api_base"` // 默认 https://api.weixin.qq.com，测试时指向假服务器
+}
+
+// Enabled 为 true 时开放微信登录与家长端 /api。
+func (w WeChat) Enabled() bool { return w.AppID != "" && w.Secret != "" }
 
 // Demo 是演示环境的预置：家长与同意标记在产品里由家长端绑定时取得。
 type Demo struct {

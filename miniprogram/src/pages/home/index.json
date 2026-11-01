@@ -1,0 +1,9 @@
+{
+  "navigationStyle": "custom",
+  "enablePullDownRefresh": true,
+  "backgroundColor": "#FFF8EC",
+  "usingComponents": {
+    "plush-avatar": "../../components/plush-avatar/index",
+    "privacy-sheet": "../../components/privacy-sheet/index"
+  }
+}

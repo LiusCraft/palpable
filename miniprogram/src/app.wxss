@@ -1,0 +1,132 @@
+/* 可感家长端：绘本风格。暖奶油底、棕色描边、贴纸投影、大圆角。 */
+page {
+  --ink: #4a3b32;
+  --ink-2: #8c7a6b;
+  --ink-3: #b9a895;
+  --cream: #fff8ec;
+  --paper: #ffffff;
+  --line: #f0e2cc;
+  --shadow: #ecdcc2;
+  --coral: #ff8a4c;
+  --coral-deep: #e8692a;
+  --coral-soft: #fff0e6;
+  --mint: #3fb68b;
+  --mint-soft: #e2f6ee;
+  --sky: #4fa5ee;
+  --sky-soft: #e5f2ff;
+  --berry: #ef5b75;
+  --berry-soft: #ffe9ed;
+  --butter: #ffd15c;
+  --butter-soft: #fff5d6;
+
+  /* TDesign 主题 */
+  --td-brand-color: var(--coral);
+  --td-brand-color-active: var(--coral-deep);
+  --td-brand-color-focus: var(--coral-soft);
+  --td-brand-color-light: var(--coral-soft);
+  --td-brand-color-light-active: #ffe2cf;
+  --td-brand-color-disabled: #ffc6a6;
+  --td-success-color: var(--mint);
+  --td-success-color-light: var(--mint-soft);
+  --td-error-color: var(--berry);
+  --td-error-color-light: var(--berry-soft);
+  --td-warning-color: #f0a020;
+  --td-text-color-primary: var(--ink);
+  --td-text-color-secondary: var(--ink-2);
+  --td-text-color-placeholder: var(--ink-3);
+  --td-bg-color-page: var(--cream);
+  --td-bg-color-container: var(--paper);
+  --td-component-border: var(--line);
+  --td-component-stroke: var(--line);
+  --td-radius-default: 24rpx;
+  --td-radius-large: 32rpx;
+  --td-radius-extraLarge: 40rpx;
+  --td-button-border-radius: 999rpx;
+  --td-button-large-height: 104rpx;
+  --td-button-font-weight: 700;
+  --td-dialog-border-radius: 40rpx;
+  --td-dialog-title-font-size: 36rpx;
+  --td-toast-radius: 28rpx;
+  --td-switch-checked-color: var(--mint);
+
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 30rpx;
+  line-height: 1.5;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
+}
+
+.page {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 24rpx 32rpx calc(48rpx + env(safe-area-inset-bottom));
+}
+
+/* 贴纸卡片：粗描边 + 实色下投影，像从绘本里剪下来的 */
+.card {
+  background: var(--paper);
+  border: 4rpx solid var(--line);
+  border-radius: 40rpx;
+  box-shadow: 0 10rpx 0 var(--shadow);
+  padding: 32rpx;
+  margin-bottom: 32rpx;
+}
+
+.h1 { font-size: 48rpx; font-weight: 800; letter-spacing: 1rpx; }
+.h2 { font-size: 36rpx; font-weight: 800; }
+.h3 { font-size: 32rpx; font-weight: 700; }
+.muted { color: var(--ink-2); font-size: 26rpx; }
+.faint { color: var(--ink-3); font-size: 24rpx; }
+
+/* 标题下的蜡笔高光 */
+.marker {
+  display: inline;
+  background: linear-gradient(transparent 58%, var(--butter-soft) 58%, var(--butter-soft) 92%, transparent 92%);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 8rpx 4rpx 20rpx;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 4rpx 18rpx;
+  border-radius: 999rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+  background: var(--butter-soft);
+  color: #b07a00;
+}
+.pill.on { background: var(--mint-soft); color: #23855f; }
+.pill.off { background: #f3ede4; color: var(--ink-2); }
+.pill.alert { background: var(--berry-soft); color: #c43c55; }
+.pill.sky { background: var(--sky-soft); color: #2f7cc2; }
+
+.dot { width: 14rpx; height: 14rpx; border-radius: 50%; background: currentColor; }
+
+.row { display: flex; align-items: center; }
+.grow { flex: 1; min-width: 0; }
+.ellipsis { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* 主按钮：实色投影，按下时下沉 */
+.btn-chunky {
+  box-shadow: 0 10rpx 0 var(--coral-deep) !important;
+  font-size: 34rpx !important;
+}
+.btn-chunky:active { transform: translateY(6rpx); box-shadow: 0 4rpx 0 var(--coral-deep) !important; }
+
+.link { color: var(--coral-deep); font-weight: 600; }
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24rpx 16rpx 8rpx;
+}
+.empty-text { color: var(--ink-2); font-size: 26rpx; margin-top: 12rpx; }

@@ -12,7 +12,7 @@
 
 ```go
 type Store interface {
-    Devices() DeviceRepo;   Styles() StyleRepo;   Guardians() GuardianRepo
+    Devices() DeviceRepo;   Styles() StyleRepo;   Guardians() GuardianRepo;   Sessions() SessionRepo
     Friendships() FriendshipRepo;   Groups() GroupRepo;   History() HistoryRepo
     Close() error
 }
@@ -24,7 +24,8 @@ func NewMemory() *Memory                        // 假实现，与 SQLite 满足
 | --- | --- | --- |
 | `DeviceRepo` | `Get / Create / Update / Delete / ListByGuardian` | `Create` 已存在 `ErrConflict`（并发开通判重）；`Update` 不存在 `ErrNotFound`、不改 `CreatedAt`；`Delete` 同一事务删设备、好友、群成员、历史 |
 | `StyleRepo` | `Get / Put / List` | `Put` 覆盖 |
-| `GuardianRepo` | `Get / Put` | `Put` 覆盖 |
+| `GuardianRepo` | `Get / ByWxOpenID / Create / Put / Delete` | `Create` 的 ID 或 openid 已存在 `ErrConflict`（并发首次登录判重）；`Put` 覆盖、不改 `CreatedAt`；`Delete` 同一事务删家长与其全部会话 |
+| `SessionRepo` | `Create / Get / Delete / DeleteExpired` | 键是令牌的 SHA-256；`DeleteExpired` 返回删除条数 |
 | `FriendshipRepo` | `Get / ByPair / Create / Update / ListByDevice / ListByStatus` | `ByPair` 参数顺序无关；`Update` 只改 `Status`、`ConfirmedBy`；`ListByStatus` 供启动装载 |
 | `GroupRepo` | `Create / Get / ByCode / List / Delete / DeleteExpired / AddMember / RemoveMember / Members / ListByMember` | 只存群；区域频道成员不入库；`AddMember` 已是成员不改 `JoinedAt` |
 | `HistoryRepo` | `Append / ListByDevice(from, to)` | 区间 `[from, to)`，按时间升序 |
@@ -37,7 +38,8 @@ func NewMemory() *Memory                        // 假实现，与 SQLite 满足
 | --- | --- | --- |
 | `device` | `device_id` PK, `skin`, `style_id`, `agent_id`, `doll_name`, `kid_name`, `stage`, `guardian_id`, `voice_consent`, `speaker_id`, `created_at` | — |
 | `style` | `style_id` PK, `skin`, `agent_id` | 引导智能体 `style_id = welcome` |
-| `guardian` | `guardian_id` PK, `display_name` | — |
+| `guardian` | `guardian_id` PK, `display_name`, `wx_openid`, `created_at` | `wx_openid` 非空时唯一（部分唯一索引） |
+| `guardian_session` | `token_hash` PK, `guardian_id`, `created_at`, `expires_at` | 索引 `guardian_id`；只存哈希，不存令牌 |
 | `friendship` | `id` PK, `a`, `b`, `status`, `confirmed_by`, `created_at` | `CHECK (a < b)`；`UNIQUE (a, b)`；索引 `b` |
 | `channel_group` | `channel_id` PK, `name`, `owner`, `code`, `expires_at` | 索引 `code` |
 | `channel_member` | `(channel_id, participant_id)` PK, `joined_at` | 外键 `ON DELETE CASCADE`；索引 `participant_id` |

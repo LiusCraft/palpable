@@ -45,6 +45,7 @@ func (s *SQLite) Devices() DeviceRepo         { return sqlDevices{s.db} }
 func (s *SQLite) DeviceKeys() DeviceKeyRepo   { return sqlDeviceKeys{s.db} }
 func (s *SQLite) Styles() StyleRepo           { return sqlStyles{s.db} }
 func (s *SQLite) Guardians() GuardianRepo     { return sqlGuardians{s.db} }
+func (s *SQLite) Sessions() SessionRepo       { return sqlSessions{s.db} }
 func (s *SQLite) Friendships() FriendshipRepo { return sqlFriendships{s.db} }
 func (s *SQLite) Groups() GroupRepo           { return sqlGroups{s.db} }
 func (s *SQLite) History() HistoryRepo        { return sqlHistory{s.db} }
@@ -291,22 +292,123 @@ func (r sqlStyles) List(ctx context.Context) ([]Style, error) {
 
 type sqlGuardians struct{ db *sql.DB }
 
+const guardianCols = "guardian_id, display_name, wx_openid, created_at"
+
+func scanGuardian(r rowScanner) (Guardian, error) {
+	var g Guardian
+	var created int64
+	err := r.Scan(&g.ID, &g.DisplayName, &g.WxOpenID, &created)
+	g.CreatedAt = fromMillis(created)
+	return g, err
+}
+
 func (r sqlGuardians) Get(ctx context.Context, g id.GuardianID) (Guardian, error) {
-	out := Guardian{ID: g}
-	err := r.db.QueryRowContext(ctx, "SELECT display_name FROM guardian WHERE guardian_id = ?", g).Scan(&out.DisplayName)
+	out, err := scanGuardian(r.db.QueryRowContext(ctx, "SELECT "+guardianCols+" FROM guardian WHERE guardian_id = ?", g))
 	if err != nil {
 		return Guardian{}, fmt.Errorf("get guardian %s: %w", g, notFoundIfNoRows(err))
 	}
 	return out, nil
 }
 
+func (r sqlGuardians) ByWxOpenID(ctx context.Context, openid string) (Guardian, error) {
+	if openid == "" {
+		return Guardian{}, fmt.Errorf("guardian by openid: %w", ErrNotFound)
+	}
+	out, err := scanGuardian(r.db.QueryRowContext(ctx, "SELECT "+guardianCols+" FROM guardian WHERE wx_openid = ?", openid))
+	if err != nil {
+		return Guardian{}, fmt.Errorf("guardian by openid: %w", notFoundIfNoRows(err))
+	}
+	return out, nil
+}
+
+func (r sqlGuardians) Create(ctx context.Context, g Guardian) error {
+	_, err := r.db.ExecContext(ctx, "INSERT INTO guardian ("+guardianCols+") VALUES (?, ?, ?, ?)",
+		g.ID, g.DisplayName, g.WxOpenID, toMillis(g.CreatedAt))
+	if isUniqueViolation(err) {
+		err = ErrConflict
+	}
+	if err != nil {
+		return fmt.Errorf("create guardian %s: %w", g.ID, err)
+	}
+	return nil
+}
+
 func (r sqlGuardians) Put(ctx context.Context, g Guardian) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO guardian (guardian_id, display_name) VALUES (?, ?)
-		ON CONFLICT (guardian_id) DO UPDATE SET display_name = excluded.display_name`, g.ID, g.DisplayName)
+	_, err := r.db.ExecContext(ctx, "INSERT INTO guardian ("+guardianCols+`) VALUES (?, ?, ?, ?)
+		ON CONFLICT (guardian_id) DO UPDATE SET display_name = excluded.display_name, wx_openid = excluded.wx_openid`,
+		g.ID, g.DisplayName, g.WxOpenID, toMillis(g.CreatedAt))
+	if isUniqueViolation(err) {
+		err = ErrConflict
+	}
 	if err != nil {
 		return fmt.Errorf("put guardian %s: %w", g.ID, err)
 	}
 	return nil
+}
+
+func (r sqlGuardians) Delete(ctx context.Context, g id.GuardianID) error {
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM guardian_session WHERE guardian_id = ?", g); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, "DELETE FROM guardian WHERE guardian_id = ?", g)
+		if err != nil {
+			return err
+		}
+		return expectOneRow(res)
+	})
+	if err != nil {
+		return fmt.Errorf("delete guardian %s: %w", g, err)
+	}
+	return nil
+}
+
+// ---- session ----
+
+type sqlSessions struct{ db *sql.DB }
+
+func (r sqlSessions) Create(ctx context.Context, s Session) error {
+	_, err := r.db.ExecContext(ctx, "INSERT INTO guardian_session (token_hash, guardian_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+		s.TokenHash, s.Guardian, toMillis(s.CreatedAt), toMillis(s.ExpiresAt))
+	if isUniqueViolation(err) {
+		err = ErrConflict
+	}
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+	return nil
+}
+
+func (r sqlSessions) Get(ctx context.Context, tokenHash string) (Session, error) {
+	s := Session{TokenHash: tokenHash}
+	var created, expires int64
+	err := r.db.QueryRowContext(ctx, "SELECT guardian_id, created_at, expires_at FROM guardian_session WHERE token_hash = ?", tokenHash).
+		Scan(&s.Guardian, &created, &expires)
+	if err != nil {
+		return Session{}, fmt.Errorf("get session: %w", notFoundIfNoRows(err))
+	}
+	s.CreatedAt, s.ExpiresAt = fromMillis(created), fromMillis(expires)
+	return s, nil
+}
+
+func (r sqlSessions) Delete(ctx context.Context, tokenHash string) error {
+	res, err := r.db.ExecContext(ctx, "DELETE FROM guardian_session WHERE token_hash = ?", tokenHash)
+	if err == nil {
+		err = expectOneRow(res)
+	}
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+func (r sqlSessions) DeleteExpired(ctx context.Context, now time.Time) (int, error) {
+	res, err := r.db.ExecContext(ctx, "DELETE FROM guardian_session WHERE expires_at <= ?", toMillis(now))
+	if err != nil {
+		return 0, fmt.Errorf("delete expired sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // ---- friendship ----

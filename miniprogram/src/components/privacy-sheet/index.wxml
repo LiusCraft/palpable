@@ -1,0 +1,15 @@
+<t-popup visible="{{visible || platformAsk}}" placement="bottom" close-on-overlay-click="{{false}}" prevent-scroll-through>
+  <view class="ps">
+    <image class="ps-art" src="/assets/plush/rabbit.svg" mode="aspectFit" aria-hidden="true" />
+    <view class="h2 ps-title">{{copy.title}}</view>
+    <view class="ps-body">{{copy.body}}</view>
+    <view class="ps-docs">
+      <text class="link" data-doc="terms" bindtap="openDoc">《用户协议》</text>
+      <text class="link" data-doc="privacy" bindtap="openDoc">《隐私政策》</text>
+      <text class="link" data-doc="children" bindtap="openDoc">《儿童个人信息保护规则》</text>
+    </view>
+    <t-button t-id="privacy-agree" theme="primary" size="large" block t-class="btn-chunky"
+              open-type="agreePrivacyAuthorization" bind:agreeprivacyauthorization="onAgree">{{copy.agree}}</t-button>
+    <view class="ps-no" bindtap="onDisagree">{{copy.disagree}}</view>
+  </view>
+</t-popup>

@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2020"],
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "types": ["miniprogram-api-typings"],
+    "baseUrl": ".",
+    "paths": {
+      "tdesign-miniprogram/*": ["node_modules/tdesign-miniprogram/miniprogram_dist/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/miniprogram_npm"]
+}

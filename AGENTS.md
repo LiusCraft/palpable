@@ -1,6 +1,6 @@
 # AGENTS.md
 
-可感（Palpable）：面向儿童的 AI 语音陪伴对讲设备。当前阶段设备由 Web 页面模拟，后续落地真实硬件。
+可感（Palpable）：面向儿童的 AI 语音陪伴对讲设备。当前阶段设备由 Web 页面模拟，后续落地真实硬件；家长端是面向真实家长的微信小程序。
 
 ## 第一原则：设备端只做"传感器和执行器"
 
@@ -8,7 +8,8 @@ Web 模拟器与未来固件是**同一个协议的两个客户端**。所有业
 
 - 新增设备行为时，先改 `protocol/`，再改服务端，最后改 Web 模拟器。禁止 Web 端私自约定协议外的消息。
 - Web 模拟器里禁止直接读取其他"设备"的状态，所有跨设备信息必须来自服务端下行消息。
-- 灵矽（xrobotd/linxd）的 token、API Key 只允许存在服务端配置文件（`server/config.yaml`，不入库），MUST NOT 出现在 `web/` 或提交到仓库。
+- 灵矽（xrobotd/linxd）的 token、API Key 与微信 AppSecret 只允许存在服务端配置文件（`server/config.yaml`，不入库），MUST NOT 出现在 `web/`、`miniprogram/` 或提交到仓库。
+- 家长端小程序同样只是 `/api` 的客户端：交友放行、绑定、屏蔽等规则只在服务端，小程序里不做业务判断。
 
 ## 技术栈
 
@@ -16,6 +17,7 @@ Web 模拟器与未来固件是**同一个协议的两个客户端**。所有业
 | --- | --- |
 | 后端 | Go 1.26，标准库 `net/http`，`gorilla/websocket`，`log/slog`；存储先用 SQLite（`modernc.org/sqlite`，免 CGO），接口隔离便于换库 |
 | 前端 | React 19 + TypeScript（strict）+ Vite；3D 用 `three` + `@react-three/fiber` + `@react-three/drei`；状态用 `zustand`；样式用 Tailwind CSS；包管理 pnpm |
+| 家长端 | 原生微信小程序 + TypeScript（strict）+ TDesign 小程序组件库；包管理 pnpm（`nodeLinker: hoisted`）。见 [docs/modules/miniprogram.md](docs/modules/miniprogram.md) |
 | 协议 | JSON Schema 为单一事实来源，放 `protocol/`；TS 类型由其生成（`make gen`），Go 类型手写并由契约测试对照 schema 校验 |
 | 音频 | 与灵矽对齐：Opus、16kHz、单声道、60ms 帧，WebSocket 二进制帧 |
 
@@ -27,9 +29,11 @@ palpable/
 ├── server/            Go 后端（架构见 docs/architecture.md，模块规格见 docs/modules/README.md）
 │   ├── cmd/palpabled/ 入口，只读配置（YAML，`internal/config`）并调用 app 组装
 │   └── internal/      接入：gateway / parentapi / world；编排：app；能力：voice / bridge；
-│                      领域：device / relation / channel / zone / history / share；基础：store / linxapi / protocol / id
+│                      领域：device / relation / channel / zone / history / share / account；
+│                      基础：store / linxapi / wechat / protocol / id
 ├── web/               前端
 │   └── src/           device-sim / scenes / map / ui / shared
+├── miniprogram/       家长端微信小程序：开发者工具导入这一层；源码在 src/（pages / components / services / utils / legal）
 ├── firmware/          预留：未来硬件固件，只实现 protocol/ 的设备端
 └── docs/              产品、架构、模块、灵矽对接、路线图（入口：docs/README.md）
 ```
@@ -49,6 +53,10 @@ Go
 - 每个 WebSocket 连接的生命周期由 `context` 控制，断开后 MUST 释放所有 goroutine 与订阅，避免泄漏。
 - 音频帧热路径禁止加锁等待和日志打印；日志只记录元数据，MUST NOT 记录音频内容、声纹向量、儿童的真实姓名之外的敏感字段。
 - 外部输入（WS 消息、HTTP 请求）一律校验，非法消息返回协议错误而不是 panic。
+
+小程序
+- 每次修改后执行 `pnpm check`（在 `miniprogram/` 下）。页面可见文字只从 `utils/copy.ts` 取；WXML 不调用函数。
+- 同意隐私政策前不登录、不请求服务端；不获取手机号、头像、位置等用不到的信息。
 
 TypeScript / React
 - `strict` 打开，禁止 `any`；协议类型只从生成的 `protocol` 包导入。

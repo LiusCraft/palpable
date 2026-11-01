@@ -1,0 +1,23 @@
+.pa {
+  position: relative;
+  border-radius: 50%;
+  border: 4rpx solid rgba(74, 59, 50, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.pa-img { width: 82%; height: 82%; }
+.pa-dot {
+  position: absolute;
+  right: 4%;
+  bottom: 4%;
+  width: 22%;
+  height: 22%;
+  max-width: 32rpx;
+  max-height: 32rpx;
+  border-radius: 50%;
+  border: 5rpx solid #fff;
+  background: #cfc5b8;
+}
+.pa-on { background: var(--mint); }

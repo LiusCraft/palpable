@@ -1,4 +1,4 @@
-// Package parentapi 是家长端 REST：Web 手机窗口与将来的小程序调用同一套。
+// Package parentapi 是家长端 REST：微信小程序与 Web 演示手机窗口调用同一套。
 // 只做鉴权、归属校验、编排与序列化，业务规则在领域模块。
 package parentapi
 
@@ -26,6 +26,8 @@ type Devices interface {
 	SetFriendPolicy(ctx context.Context, d id.DeviceID, p device.FriendPolicy) error
 	SetAgentInChannel(ctx context.Context, d id.DeviceID, on bool) error
 	BlockAgent(ctx context.Context, listener, owner id.DeviceID, blocked bool) error
+	GrantVoice(ctx context.Context, d id.DeviceID) error
+	RevokeVoice(ctx context.Context, d id.DeviceID) error
 }
 
 type Relations interface {
@@ -46,12 +48,12 @@ type History interface {
 // Online 回答设备此刻是否在线（gateway 会话表）。
 type Online func(d id.DeviceID) bool
 
-// Auth 把令牌解析为家长；演示用固定令牌，将来换微信登录。
-type Auth func(token string) (id.GuardianID, bool)
+// Auth 把令牌解析为家长：产品里是微信登录签发的会话令牌，演示里是固定令牌。
+type Auth func(ctx context.Context, token string) (id.GuardianID, bool)
 
 // FixedToken 是演示鉴权：一个令牌对应一个家长。
 func FixedToken(token string, g id.GuardianID) Auth {
-	return func(got string) (id.GuardianID, bool) {
+	return func(_ context.Context, got string) (id.GuardianID, bool) {
 		if token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 			return "", false
 		}
@@ -67,6 +69,7 @@ type API struct {
 	history   History
 	online    Online
 	bindings  Bindings // nil 时不开放绑定接口
+	accounts  Accounts // nil 时不开放登录与账号接口
 	mux       *http.ServeMux
 }
 
@@ -95,6 +98,8 @@ type Kid struct {
 	Skin     string      `json:"skin"`
 	Stage    string      `json:"stage"`
 	Online   bool        `json:"online"`
+	// WaitingYou 是等这位家长批准的交友请求数，首页角标用。
+	WaitingYou int `json:"waiting_you"`
 }
 
 type Friend struct {
@@ -129,7 +134,7 @@ type kidHandler func(w http.ResponseWriter, r *http.Request, g id.GuardianID, ki
 func (a *API) guard(h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		g, ok := a.auth(token)
+		g, ok := a.auth(r.Context(), token)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -160,7 +165,19 @@ func (a *API) kids(w http.ResponseWriter, r *http.Request, g id.GuardianID) {
 	}
 	out := make([]Kid, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, Kid{ID: p.ID, DollName: p.DollName, KidName: p.KidName, Skin: p.Skin, Stage: stageName(p.Stage), Online: a.online(p.ID)})
+		fs, err := a.relations.Friends(r.Context(), p.ID)
+		if err != nil {
+			internal(w, err)
+			return
+		}
+		waiting := 0
+		for _, f := range fs {
+			if slices.Contains(f.WaitingFor(), p.ID) {
+				waiting++
+			}
+		}
+		out = append(out, Kid{ID: p.ID, DollName: p.DollName, KidName: p.KidName, Skin: p.Skin, Stage: stageName(p.Stage),
+			Online: a.online(p.ID), WaitingYou: waiting})
 	}
 	writeJSON(w, out)
 }
@@ -267,18 +284,29 @@ func (a *API) digest(w http.ResponseWriter, r *http.Request, _ id.GuardianID, ki
 	writeJSON(w, dg)
 }
 
-// Settings 是家长对自家孩子的设置，见 docs/trust.md §1。
+// Settings 是家长对自家孩子的设置（PUT 请求体），见 docs/trust.md §1。
 type Settings struct {
 	FriendPolicy string `json:"friend_policy"` // approve：需我批准；notify：孩子自己交友、事后通知我
-	// AgentInChannel：自家小伙伴被孩子点名时能否在频道里对好友说话。PUT 时省略表示不改。
+	// AgentInChannel：自家小伙伴被孩子点名时能否在频道里对好友说话。省略表示不改。
 	AgentInChannel *bool `json:"agent_in_channel,omitempty"`
+	// VoiceConsent：声音登记的单独同意。false 立即删除灵矽侧的声纹；true 只在起名前可开。省略表示不改。
+	VoiceConsent *bool `json:"voice_consent,omitempty"`
+}
+
+// SettingsView 是 GET 返回的设置，多出声纹的只读状态。
+type SettingsView struct {
+	FriendPolicy   string `json:"friend_policy"`
+	AgentInChannel bool   `json:"agent_in_channel"`
+	VoiceConsent   bool   `json:"voice_consent"`
+	VoiceEnrolled  bool   `json:"voice_enrolled"`   // 已经登记了声纹
+	VoiceCanEnable bool   `json:"voice_can_enable"` // 现在还能补开（登记只在起名前进行）
 }
 
 var friendPolicies = map[string]device.FriendPolicy{"approve": device.FriendApprove, "notify": device.FriendNotify}
 
 func (a *API) settings(w http.ResponseWriter, _ *http.Request, _ id.GuardianID, kid device.Profile) {
-	on := !kid.AgentOff
-	out := Settings{FriendPolicy: "approve", AgentInChannel: &on}
+	out := SettingsView{FriendPolicy: "approve", AgentInChannel: !kid.AgentOff, VoiceConsent: kid.VoiceConsent,
+		VoiceEnrolled: kid.SpeakerID != "", VoiceCanEnable: kid.Stage == device.StageFresh}
 	if kid.FriendPolicy == device.FriendNotify {
 		out.FriendPolicy = "notify"
 	}
@@ -295,6 +323,10 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request, _ id.GuardianI
 		writeError(w, http.StatusBadRequest, "friend_policy must be approve or notify")
 		return
 	}
+	// 声纹这一步可能被拒或因灵矽不可用失败，放在最前，失败时其余设置都不改。
+	if s.VoiceConsent != nil && *s.VoiceConsent != kid.VoiceConsent && !a.setVoice(w, r, kid, *s.VoiceConsent) {
+		return
+	}
 	if err := a.devices.SetFriendPolicy(r.Context(), kid.ID, policy); err != nil {
 		internal(w, err)
 		return
@@ -306,6 +338,27 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request, _ id.GuardianI
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// setVoice 开关声音登记；已写错误响应时返回 false。
+func (a *API) setVoice(w http.ResponseWriter, r *http.Request, kid device.Profile, on bool) bool {
+	if on {
+		switch err := a.devices.GrantVoice(r.Context(), kid.ID); {
+		case errors.Is(err, device.ErrNotOnboarding):
+			writeError(w, http.StatusConflict, "voice enrollment only happens before the companion is named")
+			return false
+		case err != nil:
+			internal(w, err)
+			return false
+		}
+		return true
+	}
+	if err := a.devices.RevokeVoice(r.Context(), kid.ID); err != nil {
+		slog.Error("parentapi revoke voice", "device_id", kid.ID, "error", err)
+		writeError(w, http.StatusServiceUnavailable, "voiceprint service unavailable, try again later")
+		return false
+	}
+	return true
 }
 
 // blockAgent 屏蔽或解除屏蔽一位朋友的小伙伴（《拟人化互动服务管理暂行办法》第十四条"屏蔽特定角色"）。
