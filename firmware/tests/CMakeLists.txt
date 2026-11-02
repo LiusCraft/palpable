@@ -7,7 +7,7 @@ get_filename_component(FIRMWARE "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(CJSON_SOURCE_DIR "" CACHE PATH "Existing cJSON source directory for offline tests")
 if(NOT CJSON_SOURCE_DIR)
     include(FetchContent)
-    file(READ "${FIRMWARE}/upstream.lock.json" LOCK)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/cjson.lock.json" LOCK)
     string(JSON CJSON_REPO GET "${LOCK}" host_cjson_repository)
     string(JSON CJSON_REV GET "${LOCK}" host_cjson_revision)
     # Only populate sources; the small static library is configured below.

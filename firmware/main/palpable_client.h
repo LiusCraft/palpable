@@ -17,6 +17,8 @@ struct Callbacks {
     std::function<void(const cJSON*)> message;
     std::function<void(const Bytes&, int sample_rate, int frame_duration)> audio;
     std::function<void()> flush_audio;
+    // 对 hello.challenge 签名：返回 ECDSA-P256-SHA256 的 r‖s（64 字节）base64url，失败返回空串。
+    std::function<std::string(const std::string& message)> sign;
 };
 
 struct Peer {
@@ -29,7 +31,7 @@ class Client {
 public:
     explicit Client(Callbacks callbacks);
     bool Open(const std::string& mac, const std::string& skin,
-              const std::vector<std::string>& capabilities);
+              const std::vector<std::string>& capabilities, const std::string& pubkey = "");
     void Close();
     bool ReceiveText(const std::string& text);
     void ReceiveAudio(const Bytes& bytes);
@@ -49,6 +51,8 @@ private:
     bool ready_ = false;
     bool failed_ = false;
     bool talking_ = false;
+    bool challenged_ = false;
+    std::string device_id_;
     int silence_frames_ = 0;
     int ai_sample_rate_ = 16000;
     int ai_frame_duration_ = 60;
@@ -58,5 +62,6 @@ private:
     bool Send(cJSON* root, bool handshake = false);
     bool SendAudio(const Bytes& bytes);
     bool MicState(const char* state);
+    bool Prove(const char* nonce);
 };
 }  // namespace palpable

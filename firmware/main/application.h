@@ -13,7 +13,9 @@
 #include <string_view>
 
 #include "audio_service.h"
+#include "protocol.h"
 #include "device_state.h"
+#include "device_key.h"
 #include "palpable_client.h"
 #include <web_socket.h>
 
@@ -45,10 +47,11 @@ public:
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
     bool CanEnterSleepMode();
     void SendMcpMessage(const std::string& payload);
-    void RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_.load(); }
     void PlaySound(const std::string_view& sound);
+    void AnnounceDigits(const std::string& digits);
+    void ShowSkinAvatar();
     AudioService& GetAudioService() { return audio_service_; }
     void ResetProtocol();
     void ReportLocation(double lat, double lng);
@@ -67,14 +70,15 @@ private:
     std::deque<std::function<void()>> tasks_;
     std::shared_ptr<WebSocket> websocket_;
     std::unique_ptr<palpable::Client> client_;
+    std::unique_ptr<DeviceKey> device_key_;
     AudioService audio_service_;
     std::atomic<DeviceState> state_{kDeviceStateUnknown};
     std::atomic<AecMode> aec_mode_{kAecOff};
     std::atomic<bool> talking_{false};
     std::atomic<bool> network_up_{false};
+    std::atomic<bool> wifi_config_{false};
     std::atomic<bool> connection_lost_{false};
     std::atomic<uint32_t> generation_{0};
-    std::function<void(const std::string&)> mcp_broadcast_callback_;
     int retry_seconds_ = 1;
     int64_t retry_at_ = 0;
     int64_t hello_deadline_ = 0;

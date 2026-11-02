@@ -40,7 +40,13 @@ struct Harness {
             frame_duration = duration;
         },
         .flush_audio = [this]() { ++flushes; },
+        .sign = [this](const std::string& message) {
+            signed_message = message;
+            return signature;
+        },
     }};
+    std::string signed_message;
+    std::string signature = std::string(86, 'A');
     void Open() {
         assert(client.Open("aa:bb:cc:dd:ee:01", "dragon", {"mic", "speaker", "wake", "mcp"}));
     }
@@ -212,6 +218,37 @@ void FailureAndReconnect() {
     assert(h.sent.size() == 2);
     assert(h.sent[1] == "audio:4");
 }
+void Authentication() {
+    constexpr const char* kChallenge = R"({"type":"hello.challenge","nonce":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})";
+    Harness h;
+    assert(h.client.Open("aa:bb:cc:dd:ee:01", "dragon", {"mic"}, "MFkwEwYHKoZIzj0CAQ=="));
+    assert(h.sent.back().find(R"("pubkey":"MFkwEwYHKoZIzj0CAQ==")") != std::string::npos);
+    assert(h.client.ReceiveText(kChallenge));
+    assert(h.signed_message == "palpable-auth-v1\naa:bb:cc:dd:ee:01\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    assert(h.sent.back().find(R"("type":"hello.proof")") != std::string::npos);
+    assert(h.received.empty());
+    // 同一条连接只应答一次挑战。
+    assert(!h.client.ReceiveText(kChallenge));
+    assert(h.client.ReceiveText(kAck));
+    assert(!h.client.ReceiveText(kChallenge));
+    assert(h.client.ReceiveText(R"({"type":"bind.code","code":"375912","expires_in":600})"));
+    assert(h.client.ReceiveText(R"({"type":"bind.state","event":"bound"})"));
+    assert(h.received.back() == "bind.state");
+    assert(h.client.ReceiveText(R"({"type":"transcript","role":"child","text":"今天天气怎么样"})"));
+    assert(h.received.back() == "transcript");
+    assert(!h.client.ReceiveText(R"({"type":"transcript","role":"robot","text":"x"})"));
+
+    // 签名失败时连接作废，等待重连。
+    Harness failing;
+    failing.signature.clear();
+    failing.Open();
+    assert(!failing.client.ReceiveText(kChallenge));
+    assert(failing.client.Failed());
+
+    // 新连接重新允许应答挑战。
+    h.Open();
+    assert(h.client.ReceiveText(kChallenge));
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -222,5 +259,6 @@ int main(int argc, char** argv) {
     PlaybackSources();
     ValidationAndTools();
     FailureAndReconnect();
+    Authentication();
     std::cout << "Handshake, VAD ordering, audio switching, validation, MCP and reconnect passed\n";
 }

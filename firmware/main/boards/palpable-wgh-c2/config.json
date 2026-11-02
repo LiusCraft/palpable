@@ -1,0 +1,5 @@
+{
+    "manufacturer": "palpable",
+    "type": "palpable-wgh-c2",
+    "target": "esp32s3"
+}
