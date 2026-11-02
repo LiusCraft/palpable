@@ -93,8 +93,6 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
-      - name: Prepare pinned firmware hardware layer
-        run: make firmware-prepare
       - name: Test firmware client and real gateway
         run: make firmware-smoke
 
