@@ -69,9 +69,10 @@ OnDeviceMCP(d, msg):
 | `self.profile.set_names` | `doll_name` `kid_name` | `device.SetNames` | 已记住 |
 | `self.voiceprint.enroll` | — | `device.EnrollVoice` | 成功，或原因（未同意 / 没取到声音）；只有引导智能体会被提示使用 |
 | `self.zone.join` | — | `zone.JoinCurrent` | 成功，或不在任何区域 |
-| `self.group.create` | `ttl`: trip / today / forever | `channel.CreateGroup` | 4 位码，并让设备播报 |
+| `self.group.create` | `name`（孩子起的群名，≤12 字）`ttl`: trip / today / forever | `channel.CreateGroup` | 4 位码，并让设备播报 |
 | `self.group.join` | `code` | `channel.JoinGroup` | 成功或失败原因 |
 | `self.group.switch` | `target`: 群名 / next / prev | `channel.Switch` | 当前群名 |
+| `self.group.list` | — | `channel.List` | 加入的群名，标出当前所在；不含区域频道 |
 | `self.group.current` | — | `channel.Current` | 当前群与在线好友 |
 | `self.friends.list` | — | `relation.Friends` | 好友名字 |
 | `self.friends.nearby` | — | `relation.FilterFriends(channel.Members)` | 附近的好友 |

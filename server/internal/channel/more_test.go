@@ -87,10 +87,10 @@ func TestStoreErrorsPropagate(t *testing.T) {
 	}
 	s := store.NewMemory()
 	c, _ := newChannels(t, s)
-	code, err := c.CreateGroup(ctx, a, TTLForever)
+	code, err := c.CreateGroup(ctx, a, TTLForever, "")
 	must(t, err)
 	c.repo = brokenGroups{GroupRepo: s.Groups()}
-	if _, err := c.CreateGroup(ctx, a, TTLToday); !errors.Is(err, errBoom) {
+	if _, err := c.CreateGroup(ctx, a, TTLToday, ""); !errors.Is(err, errBoom) {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 	if err := c.JoinGroup(ctx, b, code); !errors.Is(err, errBoom) {
