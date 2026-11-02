@@ -126,10 +126,12 @@ export class Player {
     this.ctx = ctx
     this.decoder = new AudioDecoder({
       output: (data) => {
+        // Chrome 的 Opus 解码器可能不按配置的采样率输出（常见 48kHz），缓冲区必须按实际值标注，否则会变慢变低沉。
+        const outRate = data.sampleRate
         const pcm = new Float32Array(data.numberOfFrames)
         data.copyTo(pcm, { planeIndex: 0, format: 'f32-planar' })
         data.close()
-        const buf = ctx.createBuffer(1, pcm.length, rate)
+        const buf = ctx.createBuffer(1, pcm.length, outRate)
         buf.copyToChannel(pcm, 0)
         const src = ctx.createBufferSource()
         src.buffer = buf
