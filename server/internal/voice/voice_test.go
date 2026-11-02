@@ -3,9 +3,12 @@ package voice
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kazzmir/opus-go/opus"
 
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
@@ -45,6 +48,11 @@ func (f *fakeMembers) Members(ch id.ChannelID) []id.ParticipantID {
 }
 
 func (f *fakeMembers) join(x id.DeviceID) { f.mu.Lock(); f.fg[id.Device(x)] = park; f.mu.Unlock() }
+func (f *fakeMembers) joinTo(x id.DeviceID, ch id.ChannelID) {
+	f.mu.Lock()
+	f.fg[id.Device(x)] = ch
+	f.mu.Unlock()
+}
 func (f *fakeMembers) leave(x id.DeviceID) {
 	f.mu.Lock()
 	delete(f.fg, id.Device(x))
@@ -268,8 +276,8 @@ func TestSpeakingInterruptsOwnAIAnnouncement(t *testing.T) {
 	if g.ai.fwd() != 0 {
 		t.Fatal("speech after joining must go to the channel, not the AI")
 	}
-	if bu := g.r.bursts[park]; bu == nil || bu.Speaker != id.Device(a) {
-		t.Fatal("kid should hold the floor")
+	if g.r.bursts[burstKey{park, id.Device(a)}] == nil {
+		t.Fatal("kid should start speaking in the channel")
 	}
 }
 
@@ -310,32 +318,120 @@ func TestOnlyFriendsHearAndRemovalCutsOff(t *testing.T) {
 	}
 }
 
-// 3. 发言权
-func TestFloorBusyAndRelease(t *testing.T) {
+// 群靠邀请码手动加入，成员不是好友也互相听见；好友被解除不影响群内收听。
+func TestGroupMembersHearWithoutFriendship(t *testing.T) {
+	g := newRig(t)
+	const grp id.ChannelID = "group:1"
+	g.members.joinTo(a, grp)
+	g.members.joinTo(c, grp) // a、c 不是好友
+	g.r.OnMicState(a, true)
+	if started := nextEvent(t, g.r); len(started.Burst.Listeners) != 1 {
+		t.Fatalf("listeners = %+v", started.Burst.Listeners)
+	}
+	g.r.OnMicFrame(a, []byte{1})
+	want := []string{"speaker start " + string(a), "frame 1"}
+	eventually(t, func() bool { return equal(g.sink.of(c), want) }, "non-friend in group hears a")
+
+	g.r.OnFriendRemoved(a, c)
+	g.r.OnMicFrame(a, []byte{2})
+	eventually(t, func() bool { return equal(g.sink.of(c), append(want, "frame 2")) }, "group listening unaffected")
+}
+
+// 3. 同时说话：不占线，听者收到混音，设备上只看到一次"有人在说话"。
+func TestConcurrentSpeakersAreMixed(t *testing.T) {
 	g := newRig(t)
 	g.friends.pairs[[2]id.DeviceID{b, d}] = true
 	for _, x := range []id.DeviceID{a, b, d} {
 		g.members.join(x)
 	}
 	g.r.OnMicState(a, true)
+	nextEvent(t, g.r)
+	if g.r.mixers[park] != nil {
+		t.Fatal("one speaker must stay pass-through")
+	}
+	g.r.OnMicFrame(a, []byte{1})
+	eventually(t, func() bool { return equal(g.sink.of(d), []string{"speaker start " + string(a), "frame 1"}) }, "raw frame while alone")
+
 	g.r.OnMicState(b, true)
-	g.r.OnMicFrame(b, []byte{9})
-	g.r.OnMicFrame(b, []byte{9})
-	eventually(t, func() bool { return len(g.sink.of(b)) == 3 }, "b hears a and is told busy")
-	counts := map[string]int{}
-	for _, got := range g.sink.of(b) {
-		counts[got]++
+	if e := nextEvent(t, g.r); e.Kind != BurstStarted || e.Burst.Speaker != id.Device(b) {
+		t.Fatalf("b should start speaking at once: %+v", e)
 	}
-	if counts["sound busy"] != 1 || counts["haptic tap"] != 1 || counts["speaker start "+string(a)] != 1 {
-		t.Fatalf("b got %v; busy must be told once per sentence", g.sink.of(b))
+	if g.r.mixers[park] == nil {
+		t.Fatal("two speakers must be mixed")
 	}
-	for _, got := range g.sink.of(d) {
-		if got == "frame 9" {
-			t.Fatal("b's frames must be dropped while a holds the floor")
+	g.r.OnMicFrame(a, opusFrame(t))
+	g.r.OnMicFrame(b, opusFrame(t))
+	g.r.OnMicFrame(b, []byte{0xff}) // 坏包丢弃，不能让服务端 panic
+	g.r.mixTick()
+	eventually(t, func() bool { return len(g.sink.of(d)) == 3 }, "d hears the mix")
+	eventually(t, func() bool { return len(g.sink.of(a)) == 2 }, "a hears b")
+	for _, x := range []id.DeviceID{a, b} {
+		for _, m := range g.sink.of(x) {
+			if m == "sound busy" {
+				t.Fatalf("%s told busy: %v", x, g.sink.of(x))
+			}
 		}
 	}
+	if starts := count(g.sink.of(d), "speaker start "+string(a)) + count(g.sink.of(d), "speaker start "+string(b)); starts != 1 {
+		t.Fatalf("d saw %d starts: %v", starts, g.sink.of(d))
+	}
 
-	// 句中停顿：拖尾内重新开口，发言权仍是 a 的。
+	// a 说完：只剩 b，退回透传；d 还在听 b，不能收到 stop。
+	g.r.OnMicState(a, false)
+	g.clk.add(burstTail + tick)
+	g.r.OnMicFrame(b, opusFrame(t)) // b 还在说，看门狗不能把它也结束
+	g.r.expire()
+	if g.r.mixers[park] != nil {
+		t.Fatal("back to pass-through when one speaker is left")
+	}
+	g.r.OnMicFrame(b, []byte{2})
+	eventually(t, func() bool { return count(g.sink.of(d), "frame 2") == 1 }, "d hears b raw again")
+	if count(g.sink.of(d), "speaker stop "+string(a)) != 0 {
+		t.Fatalf("d must not be told stop while b still talks: %v", g.sink.of(d))
+	}
+	g.r.OnMicState(b, false)
+	g.clk.add(burstTail + tick)
+	g.r.expire()
+	eventually(t, func() bool { return count(g.sink.of(d), "speaker stop "+string(a)) == 1 }, "d told stop once everyone is done")
+}
+
+func count(got []string, want string) int {
+	n := 0
+	for _, s := range got {
+		if s == want {
+			n++
+		}
+	}
+	return n
+}
+
+// opusFrame 是一帧真实的 16kHz 60ms Opus 包。
+func opusFrame(t *testing.T) []byte {
+	t.Helper()
+	enc, err := opus.NewEncoder(16000, 1, opus.ApplicationVoIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = enc.Close() })
+	pcm := make([]int16, 960)
+	for i := range pcm {
+		pcm[i] = int16(8000 * math.Sin(float64(i)/10))
+	}
+	buf := make([]byte, 400)
+	n, err := enc.Encode(pcm, 960, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buf[:n]
+}
+
+// 句中停顿：拖尾内重新开口仍是同一段发言；发言人断线立即结束。
+func TestBurstTailAndDisconnect(t *testing.T) {
+	g := newRig(t)
+	for _, x := range []id.DeviceID{a, b} {
+		g.members.join(x)
+	}
+	g.r.OnMicState(a, true)
 	g.r.OnMicState(a, false)
 	g.clk.add(burstTail / 2)
 	g.r.expire()
@@ -343,18 +439,12 @@ func TestFloorBusyAndRelease(t *testing.T) {
 	g.clk.add(burstTail)
 	g.r.OnMicFrame(a, []byte{1})
 	g.r.expire()
-	if fg := g.r.bursts[park]; fg == nil || fg.Speaker != id.Device(a) {
-		t.Fatal("pause within tail must keep the floor")
+	if g.r.bursts[burstKey{park, id.Device(a)}] == nil {
+		t.Fatal("pause within tail must keep the burst")
 	}
-
-	// 发言人断线立即释放。
 	g.r.OnDisconnect(a)
-	if g.r.bursts[park] != nil {
+	if g.r.bursts[burstKey{park, id.Device(a)}] != nil {
 		t.Fatal("speaker disconnect must end the burst")
-	}
-	g.r.OnMicState(b, true)
-	if bu := g.r.bursts[park]; bu == nil || bu.Speaker != id.Device(b) {
-		t.Fatal("b should get the floor after a left")
 	}
 }
 
@@ -365,7 +455,7 @@ func TestWatchdogEndsSilentBurst(t *testing.T) {
 	g.r.OnMicFrame(a, []byte{1}) // 没有 mic.state 也能开始
 	g.clk.add(frameTimeout + tick)
 	g.r.expire()
-	if g.r.bursts[park] != nil {
+	if g.r.bursts[burstKey{park, id.Device(a)}] != nil {
 		t.Fatal("silent burst must end")
 	}
 }
@@ -452,10 +542,25 @@ func TestAgentSpeaksToFriendsOnlyWhenArmed(t *testing.T) {
 	if len(g.sink.of(c)) != 0 || len(g.sink.of(d)) != 0 || len(g.sink.of(a)) != 0 {
 		t.Fatalf("stranger %v, blocked %v, owner %v", g.sink.of(c), g.sink.of(d), g.sink.of(a))
 	}
-	// 小伙伴发言时朋友开口：占线。
+	// 小伙伴发言时朋友开口：两边同时说，小伙伴不被打断，也不占线。
 	g.r.OnMicState(b, true)
-	eventually(t, func() bool { return len(g.sink.of(b)) >= 3 && g.sink.of(b)[2] == "sound busy" }, "busy while agent speaks")
+	if e := nextEvent(t, g.r); e.Kind != BurstStarted || e.Burst.Speaker != id.Device(b) {
+		t.Fatalf("friend burst = %+v", e)
+	}
+	if g.ai.has("interrupt " + string(a)) {
+		t.Fatal("a friend talking must not interrupt the speaking agent")
+	}
+	for _, m := range g.sink.of(b) {
+		if m == "sound busy" {
+			t.Fatalf("friend told busy: %v", g.sink.of(b))
+		}
+	}
 	g.r.OnMicState(b, false)
+	g.clk.add(burstTail + tick)
+	g.r.expire()
+	if e := nextEvent(t, g.r); e.Kind != BurstEnded || e.Burst.Speaker != id.Device(b) {
+		t.Fatalf("friend burst end = %+v", e)
+	}
 
 	g.r.OnAIState(a, AIIdle)
 	if e := nextEvent(t, g.r); e.Kind != BurstEnded {

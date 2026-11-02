@@ -13,6 +13,9 @@ type DeviceID string
 // ChannelID 形如 "zone:park"、"group:<id>"。
 type ChannelID string
 
+// IsGroup 报告是否为靠邀请码加入的群；群里的成员彼此能听见，不要求是好友。
+func (c ChannelID) IsGroup() bool { return strings.HasPrefix(string(c), "group:") }
+
 type GuardianID string
 
 // ParticipantID 是频道里能说能听的实体：设备为 "dev:<mac>"，设备的小伙伴智能体为 "agt:<mac>"。
