@@ -42,3 +42,11 @@ server/*.db-wal
 
 # Playwright 本地产物
 .playwright-mcp/
+
+# 厂家后台配置与本地库
+server/admin.config.yaml
+server/palpable-admin.db
+server/palpable-admin.db-shm
+server/palpable-admin.db-wal
+admin/node_modules
+admin/dist
