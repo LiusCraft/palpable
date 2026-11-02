@@ -110,6 +110,8 @@ func TestEncodedDownstreamMatchesSchema(t *testing.T) {
 		&BindState{Type: TypeBindState, Event: "unbound"},
 		&FriendState{Type: TypeFriendState, Event: "asking", DeviceID: "02:00:00:00:00:02"},
 		&SpeakerState{Type: TypeSpeakerState, State: "start", Source: "agent", From: "02:00:00:00:00:02", Name: "小龙"},
+		&Transcript{Type: TypeTranscript, Role: "child", Text: "今天天气怎么样"},
+		&Transcript{Type: TypeTranscript, Role: "ai", Text: "今天是晴天哦"},
 	}
 	for _, m := range msgs {
 		raw, err := Encode(m)
@@ -148,6 +150,7 @@ func TestMsgType(t *testing.T) {
 		{&HelloChallenge{}, TypeHelloChallenge},
 		{&BindCode{}, TypeBindCode},
 		{&BindState{}, TypeBindState},
+		{&Transcript{}, TypeTranscript},
 	}
 	for _, c := range cases {
 		if got := c.msg.MsgType(); got != c.want {

@@ -39,6 +39,7 @@ func newUUID() string {
 type linxMsg struct {
 	Type      string          `json:"type"`
 	State     string          `json:"state"`
+	Event     string          `json:"event"`
 	Text      string          `json:"text"`
 	ErrorCode int             `json:"error_code"`
 	Payload   json.RawMessage `json:"payload"`

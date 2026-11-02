@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,10 +77,11 @@ func newFakeLinx(t *testing.T) *fakeLinx {
 
 // fakeDev 是测试用的 DeviceLink。
 type fakeDev struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	msgs   chan protocol.Message
-	audio  chan []byte
+	ctx     context.Context
+	cancel  context.CancelFunc
+	msgs    chan protocol.Message
+	audio   chan []byte
+	display atomic.Bool
 }
 
 func newFakeDev(t *testing.T) *fakeDev {
@@ -88,10 +90,16 @@ func newFakeDev(t *testing.T) *fakeDev {
 	return &fakeDev{ctx: ctx, cancel: cancel, msgs: make(chan protocol.Message, 32), audio: make(chan []byte, 32)}
 }
 
-func (d *fakeDev) DeviceID() id.DeviceID              { return mac }
-func (d *fakeDev) Context() context.Context           { return d.ctx }
-func (d *fakeDev) Send(m protocol.Message) error      { d.msgs <- m; return nil }
-func (d *fakeDev) SendAudio(frame []byte) error       { d.audio <- frame; return nil }
+func (d *fakeDev) DeviceID() id.DeviceID         { return mac }
+func (d *fakeDev) Context() context.Context      { return d.ctx }
+func (d *fakeDev) Send(m protocol.Message) error { d.msgs <- m; return nil }
+func (d *fakeDev) SendAudio(frame []byte) error  { d.audio <- frame; return nil }
+func (d *fakeDev) Capabilities() []string {
+	if d.display.Load() {
+		return []string{"mic", "speaker", "display"}
+	}
+	return []string{"mic", "speaker"}
+}
 func (d *fakeDev) next(t *testing.T) protocol.Message { t.Helper(); return recv(t, d.msgs) }
 
 func recv[T any](t *testing.T, ch <-chan T) T {
@@ -446,5 +454,95 @@ func TestMCPPassThrough(t *testing.T) {
 	}
 	if err := b.SendMCP("02:00:00:00:00:99", json.RawMessage(`{}`)); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("unknown device: %v", err)
+	}
+}
+
+func TestTranscriptOnlyForDisplayDevices(t *testing.T) {
+	f := newFakeLinx(t)
+	_, dev, linx := open(t, f, Persona{})
+
+	// 没有屏幕：只有灯光，不发文字。
+	_ = linx.WriteJSON(map[string]any{"type": "stt", "text": "你好"})
+	wantLight(t, dev.next(t), "thinking")
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "sentence_start", "text": "你好呀"})
+	noRecv(t, dev.msgs, "transcript for device without display")
+
+	dev.display.Store(true)
+	_ = linx.WriteJSON(map[string]any{"type": "stt", "text": " 今天天气怎么样 "})
+	wantLight(t, dev.next(t), "thinking")
+	wantTranscript(t, dev.next(t), "child", "今天天气怎么样")
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "start"})
+	wantLight(t, dev.next(t), "speaking")
+	wantSpeaker(t, dev.next(t), "start")
+	long := strings.Repeat("晴", maxTranscriptRunes+10)
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "sentence_start", "text": long})
+	wantTranscript(t, dev.next(t), "ai", strings.Repeat("晴", maxTranscriptRunes))
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "sentence_start", "text": "  "})
+	noRecv(t, dev.msgs, "empty transcript")
+}
+
+func TestPlatformErrorTextIsNotShown(t *testing.T) {
+	f := newFakeLinx(t)
+	_, dev, linx := open(t, f, Persona{})
+	dev.display.Store(true)
+
+	_ = linx.WriteJSON(map[string]any{"type": "stt", "text": "请去绑定智能体。", "error_code": 10001})
+	if _, ok := dev.next(t).(*protocol.Error); !ok {
+		t.Fatal("expected error")
+	}
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "start"})
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "sentence_start", "text": "请去绑定智能体。"})
+	noRecv(t, dev.msgs, "platform error transcript")
+}
+
+func wantTranscript(t *testing.T, m protocol.Message, role, text string) {
+	t.Helper()
+	tr, ok := m.(*protocol.Transcript)
+	if !ok || tr.Role != role || tr.Text != text {
+		t.Fatalf("want transcript %s %q, got %#v", role, text, m)
+	}
+}
+
+// 灵矽空闲断连前会让 AI 说告别语；收到 idle_timeout 通知就立即换新会话，不报错、不等退避。
+func TestIdleNoticeRotatesSessionImmediately(t *testing.T) {
+	f := newFakeLinx(t)
+	b := fastBridge(f.url)
+	b.backoffMin, b.backoffMax = time.Hour, time.Hour // 证明换会话不走退避
+	dev := newFakeDev(t)
+	if err := b.Open(context.Background(), dev, Persona{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close(mac) })
+	hello := recv(t, f.hellos)
+	notify, _ := hello["features"].(map[string]any)["notify"].(map[string]any)
+	if notify["idle_timeout"] != float64(90) {
+		t.Fatalf("hello must ask for idle_timeout notify, got %v", hello["features"])
+	}
+	first := recv(t, f.conns)
+	if _, ok := dev.next(t).(*protocol.AudioDownlink); !ok {
+		t.Fatal("first message must be audio.downlink")
+	}
+
+	_ = first.WriteJSON(map[string]any{"type": "notify", "event": "idle_timeout", "timeout": 90})
+	recv(t, f.hellos)
+	recv(t, f.conns)
+	if _, ok := dev.next(t).(*protocol.AudioDownlink); !ok {
+		t.Fatal("rotated session must announce audio.downlink, and no error")
+	}
+}
+
+func TestIdleNoticeIgnoredWhileSpeaking(t *testing.T) {
+	f := newFakeLinx(t)
+	_, dev, linx := open(t, f, Persona{})
+	recv(t, f.hellos)
+	_ = linx.WriteJSON(map[string]any{"type": "tts", "state": "start"})
+	wantLight(t, dev.next(t), "speaking")
+	wantSpeaker(t, dev.next(t), "start")
+
+	_ = linx.WriteJSON(map[string]any{"type": "notify", "event": "idle_timeout", "timeout": 90})
+	select {
+	case <-f.conns:
+		t.Fatal("must not rotate while AI is speaking")
+	case <-time.After(200 * time.Millisecond):
 	}
 }

@@ -39,6 +39,7 @@ const (
 	TypeFriendState    = "friend.state"
 	TypeBindCode       = "bind.code"
 	TypeBindState      = "bind.state"
+	TypeTranscript     = "transcript"
 	TypeError          = "error"
 )
 
@@ -211,6 +212,13 @@ type FriendState struct {
 	Name     string      `json:"name,omitempty"`
 }
 
+// Transcript 是与 AI 对话的文字，只发给声明了 display 能力的设备。
+type Transcript struct {
+	Type string `json:"type"`
+	Role string `json:"role"` // child | ai
+	Text string `json:"text"`
+}
+
 type Error struct {
 	Type    string `json:"type"`
 	Code    string `json:"code"`
@@ -222,6 +230,7 @@ func (*HelloProof) MsgType() string     { return TypeHelloProof }
 func (*HelloChallenge) MsgType() string { return TypeHelloChallenge }
 func (*BindCode) MsgType() string       { return TypeBindCode }
 func (*BindState) MsgType() string      { return TypeBindState }
+func (*Transcript) MsgType() string     { return TypeTranscript }
 func (*Wake) MsgType() string           { return TypeWake }
 func (*MicState) MsgType() string       { return TypeMicState }
 func (*Proximity) MsgType() string      { return TypeProximity }

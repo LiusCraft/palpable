@@ -32,10 +32,13 @@ cJSON* AudioParams() {
 Client::Client(Callbacks callbacks) : callbacks_(std::move(callbacks)) {}
 
 bool Client::Open(const std::string& mac, const std::string& skin,
-                  const std::vector<std::string>& capabilities) {
+                  const std::vector<std::string>& capabilities, const std::string& pubkey) {
     Close();
+    device_id_ = mac;
     auto root = Message("hello");
     cJSON_AddStringToObject(root, "device_id", mac.c_str());
+    // 公钥每次都带：open 模式首次登记需要，已登记后服务端只做一致性核对。
+    if (!pubkey.empty()) cJSON_AddStringToObject(root, "pubkey", pubkey.c_str());
     cJSON_AddStringToObject(root, "skin", skin.c_str());
     cJSON_AddStringToObject(root, "firmware", "palpable-esp32-0.1");
     cJSON_AddItemToObject(root, "audio_params", AudioParams());
@@ -50,6 +53,7 @@ void Client::Close() {
     ready_ = false;
     failed_ = false;
     talking_ = false;
+    challenged_ = false;
     silence_frames_ = 0;
     ai_sample_rate_ = 16000;
     ai_frame_duration_ = 60;
@@ -75,6 +79,12 @@ bool Client::ReceiveText(const std::string& text) {
     Json root(cJSON_ParseWithLengthOpts(text.c_str(), text.size() + 1, &end, true), cJSON_Delete);
     if (!root || !schema::Message(root.get())) return false;
     auto type = Text(root.get(), "type");
+    if (std::strcmp(type, "hello.challenge") == 0) {
+        // 每条连接只应答一次挑战，且只在握手阶段。
+        if (ready_ || challenged_) return false;
+        challenged_ = true;
+        return Prove(Text(root.get(), "nonce"));
+    }
     if (std::strcmp(type, "hello.ack") == 0) {
         if (ready_) return false;
         ready_ = true;
@@ -95,7 +105,9 @@ bool Client::ReceiveText(const std::string& text) {
         } else if (std::strcmp(type, "light") != 0 && std::strcmp(type, "haptic") != 0 &&
                    std::strcmp(type, "sound") != 0 && std::strcmp(type, "presence") != 0 &&
                    std::strcmp(type, "channel.state") != 0 && std::strcmp(type, "friend.state") != 0 &&
-                   std::strcmp(type, "mcp") != 0 && std::strcmp(type, "error") != 0) {
+                   std::strcmp(type, "mcp") != 0 && std::strcmp(type, "error") != 0 &&
+                   std::strcmp(type, "bind.code") != 0 && std::strcmp(type, "bind.state") != 0 &&
+                   std::strcmp(type, "transcript") != 0) {
             return false;
         }
     }
@@ -145,6 +157,18 @@ bool Client::Proximity(const std::vector<Peer>& peers) {
         cJSON_AddItemToArray(list, item);
     }
     return Send(root);
+}
+
+bool Client::Prove(const char* nonce) {
+    const std::string signature =
+        callbacks_.sign ? callbacks_.sign("palpable-auth-v1\n" + device_id_ + "\n" + nonce) : "";
+    if (signature.empty()) {
+        failed_ = true;
+        return false;
+    }
+    auto root = Message("hello.proof");
+    cJSON_AddStringToObject(root, "signature", signature.c_str());
+    return Send(root, true);
 }
 
 bool Client::MicState(const char* state) {

@@ -6,7 +6,7 @@
 - 握手：设备连接后 10 秒内完成 `hello` →（认证开启时）`hello.challenge` → `hello.proof` → `hello.ack`。签名规则与公钥登记见 [docs/trust.md §2](../docs/trust.md#2-设备身份与认证)。同一 `device_id` 同时只有一条连接：认证通过的新连接顶掉旧连接（旧连接收到 `error{unauthorized}` 后断开），未开启认证时后来者被拒。
 - 身份：`hello.device_id` 是设备 MAC（小写、冒号分隔），也是设备在灵矽侧的 `Device-Id`；可选的 `skin` 是皮套款式，服务端据此选风格智能体。
 - 上行类型：`hello`、`hello.proof`（仅握手）、`wake`、`mic.state`、`proximity`、`location`、`mcp`。
-- 下行类型：`hello.challenge`（仅握手）、`hello.ack`、`bind.code`、`bind.state`、`audio.downlink`、`light`、`haptic`、`sound`、`speaker.state`、`presence`、`channel.state`、`friend.state`、`mcp`、`error`。
+- 下行类型：`hello.challenge`（仅握手）、`hello.ack`、`bind.code`、`bind.state`、`audio.downlink`、`light`、`haptic`、`sound`、`speaker.state`、`presence`、`channel.state`、`friend.state`、`mcp`、`transcript`（仅 `display` 能力：与 AI 对话的文字，只发给孩子自己的设备，不保存）、`error`。
 - `mcp` 双向，`payload` 为 JSON-RPC 2.0；设备在 `capabilities` 里声明 `mcp` 才会收到。
 - 音频参数：上行固定 Opus、16kHz、单声道、60ms；下行以 `audio.downlink` 为准（灵矽的 TTS 可能是 24kHz），该消息在 AI 通道就绪后发送，早于任何下行音频帧。设备必须按它配置解码器，收到前按 16kHz / 60ms 处理。
 - 未知字段、未知类型、超出范围的值一律返回 `error`（`bad_message`），连接保持。

@@ -23,12 +23,13 @@ export type PalpableMessage =
   | FriendState
   | BindCode
   | BindState
+  | Transcript
   | Error;
 /**
  * 设备 MAC，小写、冒号分隔；也是设备在灵矽侧的 Device-Id
  */
 export type MAC = string;
-export type Capability = "mic" | "speaker" | "light" | "haptic" | "proximity" | "location" | "wake" | "mcp";
+export type Capability = "mic" | "speaker" | "light" | "haptic" | "proximity" | "location" | "wake" | "mcp" | "display";
 export type LightState = "idle" | "listening" | "thinking" | "speaking" | "peer_talking" | "muted";
 
 export interface Hello {
@@ -1112,7 +1113,7 @@ export interface Haptic {
 }
 export interface Sound {
   type: "sound";
-  name: "connected" | "joined" | "left" | "switched" | "error" | "busy" | "friend";
+  name: "connected" | "joined" | "left" | "switched" | "error" | "busy" | "friend" | "wake";
 }
 export interface SpeakerState {
   type: "speaker.state";
@@ -1179,6 +1180,14 @@ export interface BindCode {
 export interface BindState {
   type: "bind.state";
   event: "bound" | "unbound";
+}
+/**
+ * 与 AI 对话的文字，供有屏幕的设备显示（仅发给声明了 display 能力的设备，只发给说话的孩子自己的设备，服务端不保存）。child：孩子这一句的识别结果；ai：AI 正要说的这一句
+ */
+export interface Transcript {
+  type: "transcript";
+  role: "child" | "ai";
+  text: string;
 }
 export interface Error {
   type: "error";
