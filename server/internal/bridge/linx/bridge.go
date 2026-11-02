@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +46,8 @@ type DeviceLink interface {
 	Send(msg protocol.Message) error
 	SendAudio(frame []byte) error
 	Context() context.Context
+	// Capabilities 是设备 hello 声明的能力，决定是否下发文字（display）。
+	Capabilities() []string
 }
 
 // Config 来自 YAML 配置；智能体 ID 取自设备档案（见 Persona）。
@@ -77,6 +81,8 @@ type Bridge struct {
 	onMCP     atomic.Pointer[func(id.DeviceID, json.RawMessage)]
 
 	backoffMin, backoffMax time.Duration
+	// idleNotify 是请灵矽在空闲多久后发 idle_timeout 通知；须短于灵矽的空闲断连时间（默认 120s）。
+	idleNotify time.Duration
 }
 
 func New(cfg Config) *Bridge {
@@ -85,6 +91,7 @@ func New(cfg Config) *Bridge {
 		dialer:     &websocket.Dialer{HandshakeTimeout: dialTimeout},
 		backoffMin: time.Second,
 		backoffMax: 30 * time.Second,
+		idleNotify: 90 * time.Second,
 	}
 }
 
@@ -214,6 +221,8 @@ type link struct {
 	muted     atomic.Bool // Interrupt 之后到下一次 tts start 之间丢弃 TTS 音频
 	// platformErr 表示本次连接收到平台错误，之后的 TTS 都不播；重连后清除。
 	platformErr atomic.Bool
+	// rotating 表示本次断线是收到 idle_timeout 后主动换新会话，应立即重连。
+	rotating atomic.Bool
 
 	mu    sync.Mutex
 	ready chan struct{} // 连上时关闭；断线后换新的
@@ -275,6 +284,11 @@ func (l *link) run() {
 			// 只报告一次，避免重试期间刷屏。
 			_ = l.dev.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "ai service unavailable"})
 			reported = true
+		}
+		if connected && l.rotating.Swap(false) {
+			slog.Info("linx session rotated before idle close", "device_id", l.dev.DeviceID())
+			delay = l.b.backoffMin
+			continue
 		}
 		slog.Warn("linx session ended, will retry", "device_id", l.dev.DeviceID(), "connected", connected, "retry_in", delay, "error", err)
 		if time.Since(started) >= stableAfter {
@@ -385,7 +399,12 @@ func (l *link) hello() map[string]any {
 			"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60,
 		},
 		// 总是声明 mcp：设备自身不支持时，代理仍向灵矽提供业务工具。
-		"features": map[string]any{"mcp": true},
+		// idle_timeout：灵矽空闲断连前会先让 AI 说一段告别语，再断开；我们提前收到通知后主动换新会话，
+		// 孩子不会听到莫名的告别。只有真实人声与音频才重置灵矽的空闲计时，发心跳续不了命。
+		"features": map[string]any{
+			"mcp":    true,
+			"notify": map[string]any{"idle_timeout": int(l.b.idleNotify / time.Second)},
+		},
 		// 名字每次会话注入，起名后不必改智能体配置；空值也要发，否则提示词里会留下 {{占位符}}。
 		"agent_params": map[string]any{
 			"custom_replace_prompt": map[string]string{
@@ -433,6 +452,10 @@ func (l *link) readLoop(c *conn) error {
 				return fmt.Errorf("send audio to device: %w", err)
 			}
 		case websocket.TextMessage:
+			if l.idleNotice(data) {
+				l.rotating.Store(true)
+				return errors.New("rotating idle linx session")
+			}
 			l.onLinxText(data)
 		}
 	}
@@ -524,12 +547,23 @@ func (l *link) stopSpeaking() {
 	l.b.emitAIState(l.dev.DeviceID(), AIIdle)
 }
 
+// idleNotice 判断是否该因 idle_timeout 通知换新会话；AI 正在说话时不换。
+func (l *link) idleNotice(data []byte) bool {
+	m, err := parseLinx(data)
+	return err == nil && m.Type == "notify" && m.Event == "idle_timeout" && !l.speaking.Load()
+}
+
 // onLinxText 处理灵矽的 stt / tts / llm 文本消息。
 func (l *link) onLinxText(data []byte) {
 	m, err := parseLinx(data)
 	if err != nil {
 		slog.Debug("linx bad message", "error", err)
 		return
+	}
+	if m.Type == "stt" || (m.Type == "tts" && m.State != "sentence_start" && m.State != "sentence_end") {
+		// 每句一行便于排查"说了话没回应"；只记元数据，不记识别出的文字。
+		slog.Info("linx text", "device_id", l.dev.DeviceID(), "type", m.Type, "state", m.State,
+			"text_runes", len([]rune(m.Text)), "error_code", m.ErrorCode)
 	}
 	switch m.Type {
 	case "stt":
@@ -542,9 +576,10 @@ func (l *link) onLinxText(data []byte) {
 			_ = l.dev.Send(&protocol.Error{Type: protocol.TypeError, Code: protocol.CodeInternal, Message: "ai service unavailable"})
 			return
 		}
-		// 一句话识别完成，AI 开始思考。文本本身不转发给设备（设备没有屏幕）。
+		// 一句话识别完成，AI 开始思考；有屏幕的设备同时显示孩子说的这句话。
 		if m.Text != "" {
 			l.light("thinking")
+			l.transcript("child", m.Text)
 		}
 	case "mcp":
 		if fn := l.b.onMCP.Load(); fn != nil && len(m.Payload) > 0 {
@@ -563,12 +598,32 @@ func (l *link) onLinxText(data []byte) {
 			l.light("speaking")
 			_ = l.dev.Send(&protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "start", Source: "ai"})
 			l.b.emitAIState(l.dev.DeviceID(), AISpeaking)
+		case "sentence_start":
+			// 平台错误提示是给大人看的，静音期间也不显示。
+			if !l.platformErr.Load() && !l.muted.Load() {
+				l.transcript("ai", m.Text)
+			}
 		case "stop":
 			if l.speaking.Swap(false) {
 				l.stopSpeaking()
 			}
 		}
 	}
+}
+
+// maxTranscriptRunes 与 schema 中 Transcript.text 的 maxLength 一致。
+const maxTranscriptRunes = 512
+
+// transcript 只发给声明了 display 能力的设备；文字只在这条连接上转发，不保存。
+func (l *link) transcript(role, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" || !slices.Contains(l.dev.Capabilities(), "display") {
+		return
+	}
+	if r := []rune(text); len(r) > maxTranscriptRunes {
+		text = string(r[:maxTranscriptRunes])
+	}
+	_ = l.dev.Send(&protocol.Transcript{Type: protocol.TypeTranscript, Role: role, Text: text})
 }
 
 func (l *link) light(state string) {

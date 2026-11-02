@@ -112,7 +112,8 @@ func (g *Gateway) run(ctx context.Context, ws *websocket.Conn) {
 	if g.authRequired() {
 		if err := g.authenticate(ctx, s, hello, deadline); err != nil {
 			_ = s.Send(errorMsg(protocol.CodeUnauthorized, "authentication failed"))
-			slog.Warn("device authentication failed", "device_id", s.deviceID, "error", err)
+			// 公钥不是秘密；记下来便于运维把未登记的设备（如 Web 模拟器）登记进出厂清单。
+			slog.Warn("device authentication failed", "device_id", s.deviceID, "error", err, "pubkey", hello.PubKey)
 			return
 		}
 	}

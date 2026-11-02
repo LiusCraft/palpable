@@ -215,6 +215,8 @@ func (r *Router) OnMicState(d id.DeviceID, on bool) {
 			r.endAgentLocked(d, &fx) // 主人开口：自己的小伙伴让路
 			r.takeFloorLocked(d, now, &fx)
 		}
+		// AI 说话时孩子开口不在这里硬打断：音频照常转给灵矽，由它结合识别结果判断是否打断
+		// （interrupt_probe），回声残留与杂音不会让小伙伴自己停下。
 	} else if ch, ok := r.members.ForegroundOf(id.Device(d)); ok {
 		if b := r.bursts[ch]; b != nil && b.Speaker == id.Device(d) && b.stopAt.IsZero() {
 			b.stopAt = now.Add(burstTail)
@@ -233,6 +235,11 @@ func (r *Router) OnWake(d id.DeviceID) {
 	v := r.dev(d)
 	if r.ai.Available(d) {
 		v.aiTurn, v.aiTurnUntil, v.aiTurnStart = true, time.Time{}, now
+		// 小伙伴正在说话时再叫它：先停下来听孩子说。
+		if v.aiSpeaking || v.source == SourceAI {
+			fx.interrupt = append(fx.interrupt, d)
+		}
+		fx.woke = append(fx.woke, d)
 		// 正在频道里说话的话，先放下发言权。
 		if ch, ok := r.members.ForegroundOf(id.Device(d)); ok {
 			if b := r.bursts[ch]; b != nil && b.Speaker == id.Device(d) {
@@ -579,6 +586,7 @@ func (r *Router) expire() {
 type effects struct {
 	interrupt []id.DeviceID
 	busy      []id.DeviceID
+	woke      []id.DeviceID
 	listen    []listen
 	queued    []queued
 	events    []Event
@@ -609,6 +617,12 @@ func (fx *effects) apply(r *Router) {
 		p := id.Device(d)
 		_ = r.sink.Send(p, &protocol.Sound{Type: protocol.TypeSound, Name: "busy"})
 		_ = r.sink.Send(p, &protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "tap"})
+	}
+	for _, d := range fx.woke {
+		// 唤醒被接受：提示音加聆听灯，让孩子知道小伙伴在听。
+		p := id.Device(d)
+		_ = r.sink.Send(p, &protocol.Sound{Type: protocol.TypeSound, Name: "wake"})
+		_ = r.sink.Send(p, &protocol.Light{Type: protocol.TypeLight, State: "listening"})
 	}
 	for _, e := range fx.events {
 		select {

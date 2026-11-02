@@ -41,6 +41,7 @@
 | 实测：智能体列表不传分页参数时返回全量，按名字匹配可找回已建的风格智能体；`agent_id` 另存 `style` 表 | `Catalog.EnsureAll` 幂等，并每次同步提示词 |
 | 实测：`/v1/agents/{id}/chat-history` 的样本记录带 `device_id`、`session_id`、`chat_type`；**其中也有小伙伴自己的 TTS（`chat_type=2`）**，孩子的话是 `chat_type=1`（`input_audio`） | `linxapi.RecentVoiceSamples` 只取 `chat_type=1`；`device.EnrollVoice` 只用标着本机 MAC、10 分钟内的样本；实测登记成功 |
 | 实测：提示词写"如果 {{voice_step}} 是 true 才做"，模型在 false 时仍会请孩子跟读 | `voice_step` 改为注入整段指令（做 / 不做），不让模型判断 |
+| 源码（linxdv0 `session/idle_monitor.go`）：空闲断连只看**带人声的上行音频、下行音频与 IM 消息**，心跳与 `listen` 等控制消息不重置计时；默认 120 秒（智能体 `extra.goodbye.idle_timeout_seconds` 可设 60–3600），到点先让 AI 说一段告别语再断开，告别开关是灵矽全局配置。`hello.features.notify.idle_timeout` 可请灵矽在空闲到指定秒数时发 `notify{event: idle_timeout}`，只是预警，回什么都续不了命 | `bridge/linx` 声明 `idle_timeout: 90`，收到通知且 AI 没在说话时主动断开并立即重连新会话，孩子听不到莫名的告别；代价是空闲时约每 90 秒换一次会话 |
 
 ## 待验证
 

@@ -123,6 +123,8 @@ func (f *fakeSink) Send(p id.ParticipantID, m protocol.Message) error {
 		f.record(p, "sound "+m.Name)
 	case *protocol.Haptic:
 		f.record(p, "haptic "+m.Pattern)
+	case *protocol.Light:
+		f.record(p, "light "+m.State)
 	}
 	return nil
 }
@@ -226,6 +228,9 @@ func TestRouting(t *testing.T) {
 	if g.r.RouteOf(a) != RouteAI {
 		t.Fatal("wake → AI for one turn")
 	}
+	if got := g.sink.of(a); len(got) < 2 || got[len(got)-2] != "sound wake" || got[len(got)-1] != "light listening" {
+		t.Fatalf("accepted wake must chime and light up, got %v", got)
+	}
 	g.r.OnAIState(a, AISpeaking)
 	g.r.OnAIState(a, AIIdle)
 	g.clk.add(time.Second)
@@ -241,6 +246,11 @@ func TestRouting(t *testing.T) {
 	g.ai.available = false
 	if g.r.RouteOf(a) != RouteNone {
 		t.Fatal("no channel and no AI → drop")
+	}
+	before := len(g.sink.of(a))
+	g.r.OnWake(a)
+	if len(g.sink.of(a)) != before {
+		t.Fatal("wake without AI must not chime")
 	}
 }
 
@@ -513,5 +523,38 @@ func TestAgentArmRulesAndOwnerPreempts(t *testing.T) {
 	g.r.expire()
 	if e := nextEvent(t, g.r); e.Kind != BurstEnded {
 		t.Fatalf("watchdog: %+v", e)
+	}
+}
+
+// 孩子在 AI 说话中途开口：照常转给灵矽由它判断；再次唤醒则立即打断。
+func TestBargeInDuringAISpeech(t *testing.T) {
+	g := newRig(t)
+	if g.r.RouteOf(a) != RouteAI {
+		t.Fatal("no channel → AI")
+	}
+	g.r.OnMicState(a, true)
+	g.r.OnMicState(a, false)
+	if g.ai.has("interrupt " + string(a)) {
+		t.Fatal("talking while AI is silent must not interrupt")
+	}
+
+	g.r.OnAIState(a, AISpeaking)
+	g.r.OnMicState(a, true)
+	if g.ai.has("interrupt " + string(a)) {
+		t.Fatal("talking over AI must be left to linx to judge, not hard-interrupted")
+	}
+	if !g.ai.has("listen " + string(a) + " true") {
+		t.Fatal("talking over AI must still be forwarded to linx")
+	}
+	g.r.OnMicState(a, false)
+	g.r.OnAIState(a, AIIdle)
+
+	g.ai.mu.Lock()
+	g.ai.calls = nil
+	g.ai.mu.Unlock()
+	g.r.OnAIState(a, AISpeaking)
+	g.r.OnWake(a)
+	if !g.ai.has("interrupt " + string(a)) {
+		t.Fatal("wake while AI speaks must interrupt it")
 	}
 }
