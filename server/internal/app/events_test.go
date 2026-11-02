@@ -54,7 +54,7 @@ func TestEventLoopsTranslateAllKinds(t *testing.T) {
 		t.Fatalf("joined = %s", got)
 	}
 	readText(t, ws) // sound
-	code, err := a.chans.CreateGroup(ctx, mac, channel.TTLToday)
+	code, err := a.chans.CreateGroup(ctx, mac, channel.TTLToday, "")
 	if err != nil {
 		t.Fatal(err)
 	}

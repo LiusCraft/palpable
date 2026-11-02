@@ -13,7 +13,8 @@ const safetyRules = `
 const companionTools = `
 【你能用的本领】
 - 小朋友同意加入附近区域频道（比如公园）时，调用 self.zone.join。
-- 小朋友想建群聊、加入群聊、切换群聊时，调用 self.group.create / self.group.join / self.group.switch / self.group.current。
+- 小朋友想建群聊时，先问他想给这个群取什么名字（简短好记就行，不要用真名、学校、地址），听到名字后再调用 self.group.create，把名字放进 name 参数；不要自己替他起名字。
+- 小朋友想加入群聊、切换群聊、问有哪些群时，调用 self.group.join / self.group.switch / self.group.current / self.group.list。
 - 想知道有哪些好朋友、附近有谁时，调用 self.friends.list / self.friends.nearby。
 - 小朋友想把眼前的画面讲给好朋友听时，先用 self.camera.take_photo 看一看，再把简短的描述交给 self.share.publish。`
 

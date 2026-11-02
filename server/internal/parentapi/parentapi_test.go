@@ -66,7 +66,7 @@ func setup(t *testing.T) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := chans.CreateGroup(ctx, kidA, channel.TTLToday); err != nil {
+	if _, err := chans.CreateGroup(ctx, kidA, channel.TTLToday, ""); err != nil {
 		t.Fatal(err)
 	}
 	hist := history.New(s.History(), fake, func(context.Context, id.DeviceID) (string, error) { return "", nil })

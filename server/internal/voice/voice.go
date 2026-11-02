@@ -1,8 +1,9 @@
 // Package voice 是多人频道语音的核心，回答三件事：设备的话说给谁听、
 // 频道里同时有人说话怎么办、怎么把声音送到好友设备。
 //
-// 它是唯一决定声音去向的地方：不在频道时说给 AI；在频道时说给同频道的好友，
-// 陌生人的音频不转发。只透传 Opus，不解码、不混音。
+// 它是唯一决定声音去向的地方：不在频道时说给 AI；在频道时说给同频道的听者（区域频道是好友，
+// 群是全体成员），陌生人的音频不转发。频道里只有一个人说话时原样透传 Opus；
+// 多人同时说话时由 mixer 解码、混成一路再编码下发。
 package voice
 
 import (
@@ -113,7 +114,11 @@ type deviceVoice struct {
 	aiTurnStart time.Time
 	aiSpeaking  bool
 	source      Source
-	busyNotice  bool // 本句已提示过占线
+	// hearing 是此刻正在给它送声音的发言数；0→1 时发 speaker.state start，回到 0 时发 stop，
+	// 设备上看到的仍是"有人在说话"。heardSource/heardFrom 记下 start 时的内容，stop 要与之一致。
+	hearing     int
+	heardSource string
+	heardFrom   id.DeviceID
 	out         *outbox
 
 	// 主人点名让小伙伴对频道说话：下一段 AI 语音作为 agt:<mac> 的发言。
@@ -133,7 +138,14 @@ type Router struct {
 	// 一把锁保护全部状态；临界区里不做 I/O，下行经各听者的 outbox 发出。
 	mu      sync.Mutex
 	devices map[id.DeviceID]*deviceVoice
-	bursts  map[id.ChannelID]*Burst
+	bursts  map[burstKey]*Burst
+	mixers  map[id.ChannelID]*chanMix // 频道里同时有 ≥2 人说话时才有
+}
+
+// burstKey：一个频道里每个发言者各有一段发言，可以同时进行。
+type burstKey struct {
+	ch      id.ChannelID
+	speaker id.ParticipantID
 }
 
 func New(members Membership, friends Friends, ai AI, sink Sink, names Names) *Router {
@@ -145,7 +157,8 @@ func New(members Membership, friends Friends, ai AI, sink Sink, names Names) *Ro
 		now:     time.Now,
 		events:  make(chan Event, eventBuffer),
 		devices: map[id.DeviceID]*deviceVoice{},
-		bursts:  map[id.ChannelID]*Burst{},
+		bursts:  map[burstKey]*Burst{},
+		mixers:  map[id.ChannelID]*chanMix{},
 	}
 }
 
@@ -155,12 +168,16 @@ func (r *Router) Subscribe() <-chan Event { return r.events }
 func (r *Router) Run(ctx context.Context) {
 	t := time.NewTicker(tick)
 	defer t.Stop()
+	m := time.NewTicker(mixFrame * time.Second / mixRate)
+	defer m.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			r.expire()
+		case <-m.C:
+			r.mixTick()
 		}
 	}
 }
@@ -207,7 +224,6 @@ func (r *Router) OnMicState(d id.DeviceID, on bool) {
 	v.micOn = on
 	route := r.routeLocked(d, now)
 	if on {
-		v.busyNotice = false
 		if v.aiTurn {
 			v.aiTurnUntil = time.Time{} // 又开口了：继续等 AI 回应
 		}
@@ -218,7 +234,7 @@ func (r *Router) OnMicState(d id.DeviceID, on bool) {
 		// AI 说话时孩子开口不在这里硬打断：音频照常转给灵矽，由它结合识别结果判断是否打断
 		// （interrupt_probe），回声残留与杂音不会让小伙伴自己停下。
 	} else if ch, ok := r.members.ForegroundOf(id.Device(d)); ok {
-		if b := r.bursts[ch]; b != nil && b.Speaker == id.Device(d) && b.stopAt.IsZero() {
+		if b := r.bursts[burstKey{ch, id.Device(d)}]; b != nil && b.stopAt.IsZero() {
 			b.stopAt = now.Add(burstTail)
 		}
 	}
@@ -242,9 +258,7 @@ func (r *Router) OnWake(d id.DeviceID) {
 		fx.woke = append(fx.woke, d)
 		// 正在频道里说话的话，先放下发言权。
 		if ch, ok := r.members.ForegroundOf(id.Device(d)); ok {
-			if b := r.bursts[ch]; b != nil && b.Speaker == id.Device(d) {
-				r.endBurstLocked(ch, &fx)
-			}
+			r.endBurstLocked(burstKey{ch, id.Device(d)}, &fx)
 		}
 	}
 	r.syncListenLocked(d, r.routeLocked(d, now), &fx)
@@ -265,11 +279,11 @@ func (r *Router) OnMicFrame(d id.DeviceID, frame []byte) {
 		return
 	case RouteChannel:
 		ch, _ := r.members.ForegroundOf(id.Device(d))
-		b := r.bursts[ch]
+		b := r.bursts[burstKey{ch, id.Device(d)}]
 		if b == nil {
 			b = r.takeFloorLocked(d, now, &fx)
 		}
-		if b == nil || b.Speaker != id.Device(d) {
+		if b == nil {
 			r.mu.Unlock()
 			fx.apply(r)
 			return
@@ -281,12 +295,21 @@ func (r *Router) OnMicFrame(d id.DeviceID, frame []byte) {
 		if !b.stopAt.IsZero() && r.dev(d).micOn {
 			b.stopAt = time.Time{}
 		}
-		for _, l := range b.Listeners {
-			r.dev(id.OwnerDevice(l)).out.pushFrame(frame)
+		mx := r.mixers[ch]
+		if mx == nil {
+			for _, l := range b.Listeners {
+				r.dev(id.OwnerDevice(l)).out.pushFrame(frame)
+			}
 		}
 		if b.FirstOutAt.IsZero() && len(b.Listeners) > 0 {
 			b.FirstOutAt = r.now()
 		}
+		r.mu.Unlock()
+		fx.apply(r)
+		if mx != nil {
+			mx.push(b.Speaker, frame)
+		}
+		return
 	}
 	r.mu.Unlock()
 	fx.apply(r)
@@ -305,8 +328,8 @@ func (r *Router) OnAIState(d id.DeviceID, s AIState) {
 			v.agentArmedUntil = time.Time{}
 			r.startAgentLocked(d, now, &fx)
 		}
-		if v.source == SourcePeer {
-			// 好友正在说话时优先好友，AI 让路。
+		if v.source == SourcePeer && !r.agentActiveLocked(d) {
+			// 好友正在说话时优先好友，AI 让路；小伙伴正在对频道说话时不让，只有主人开口才打断它。
 			fx.interrupt = append(fx.interrupt, d)
 		} else {
 			v.source = SourceAI
@@ -341,13 +364,14 @@ func (r *Router) ArmAgent(owner id.DeviceID, blocked map[id.DeviceID]bool) error
 // OnAgentFrame 热路径：主人设备收到的 AI 下行帧；小伙伴正在频道发言时同样转给听者。
 func (r *Router) OnAgentFrame(owner id.DeviceID, frame []byte) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	ch, ok := r.members.ForegroundOf(id.Device(owner))
 	if !ok {
+		r.mu.Unlock()
 		return
 	}
-	b := r.bursts[ch]
-	if b == nil || b.Speaker != id.Agent(owner) {
+	b := r.bursts[burstKey{ch, id.Agent(owner)}]
+	if b == nil {
+		r.mu.Unlock()
 		return
 	}
 	now := r.now()
@@ -355,38 +379,61 @@ func (r *Router) OnAgentFrame(owner id.DeviceID, frame []byte) {
 	if b.FirstInAt.IsZero() {
 		b.FirstInAt = now
 	}
-	for _, l := range b.Listeners {
-		r.dev(id.OwnerDevice(l)).out.pushFrame(frame)
+	mx := r.mixers[ch]
+	if mx == nil {
+		for _, l := range b.Listeners {
+			r.dev(id.OwnerDevice(l)).out.pushFrame(frame)
+		}
 	}
 	if b.FirstOutAt.IsZero() && len(b.Listeners) > 0 {
 		b.FirstOutAt = now
 	}
+	r.mu.Unlock()
+	if mx != nil {
+		mx.push(b.Speaker, frame)
+	}
 }
 
-// startAgentLocked 频道空闲时让小伙伴拿到发言权；被占时这段话只有主人听到。
+// startAgentLocked 让小伙伴对频道说话，可以和别人同时说。主人自己直接听小伙伴的 TTS，
+// 所以把主人从频道里其他人的听者中移出，免得两路声音在他的设备上串在一起。
 func (r *Router) startAgentLocked(owner id.DeviceID, now time.Time, fx *effects) {
 	ch, ok := r.members.ForegroundOf(id.Device(owner))
-	if !ok || r.bursts[ch] != nil {
+	if !ok || r.bursts[burstKey{ch, id.Agent(owner)}] != nil {
 		return
 	}
 	blocked := r.dev(owner).agentBlocked
 	r.startBurstLocked(ch, id.Agent(owner), now, fx, func(l id.DeviceID) bool { return !blocked[l] })
+	for k, b := range r.bursts {
+		if k.ch == ch && k.speaker != id.Agent(owner) {
+			r.dropListenerLocked(b, owner)
+		}
+	}
+}
+
+func (r *Router) agentActiveLocked(owner id.DeviceID) bool {
+	ch, ok := r.members.ForegroundOf(id.Device(owner))
+	if !ok {
+		return false
+	}
+	_, active := r.bursts[burstKey{ch, id.Agent(owner)}]
+	return active
 }
 
 func (r *Router) endAgentLocked(owner id.DeviceID, fx *effects) {
 	r.dev(owner).agentArmedUntil = time.Time{}
 	if ch, ok := r.members.ForegroundOf(id.Device(owner)); ok {
-		if b := r.bursts[ch]; b != nil && b.Speaker == id.Agent(owner) {
-			r.endBurstLocked(ch, fx)
-		}
+		r.endBurstLocked(burstKey{ch, id.Agent(owner)}, fx)
 	}
 }
 
-// OnFriendRemoved 立即把对方移出正在进行的转发。
+// OnFriendRemoved 立即把对方移出正在进行的转发；群里不靠好友关系收听，不受影响。
 func (r *Router) OnFriendRemoved(a, b id.DeviceID) {
 	var fx effects
 	r.mu.Lock()
-	for _, bu := range r.bursts {
+	for k, bu := range r.bursts {
+		if k.ch.IsGroup() {
+			continue
+		}
 		sp := id.OwnerDevice(bu.Speaker)
 		var other id.DeviceID
 		switch sp {
@@ -407,12 +454,12 @@ func (r *Router) OnFriendRemoved(a, b id.DeviceID) {
 func (r *Router) OnLeave(d id.DeviceID) {
 	var fx effects
 	r.mu.Lock()
-	for ch, bu := range r.bursts {
+	for k, bu := range r.bursts {
 		if id.OwnerDevice(bu.Speaker) == d {
-			r.endBurstLocked(ch, &fx)
+			r.endBurstLocked(k, &fx)
 			continue
 		}
-		if fg, ok := r.members.ForegroundOf(id.Device(d)); !ok || fg != ch {
+		if fg, ok := r.members.ForegroundOf(id.Device(d)); !ok || fg != k.ch {
 			r.dropListenerLocked(bu, d)
 		}
 	}
@@ -424,9 +471,9 @@ func (r *Router) OnLeave(d id.DeviceID) {
 func (r *Router) OnDisconnect(d id.DeviceID) {
 	var fx effects
 	r.mu.Lock()
-	for ch, bu := range r.bursts {
+	for k, bu := range r.bursts {
 		if id.OwnerDevice(bu.Speaker) == d {
-			r.endBurstLocked(ch, &fx)
+			r.endBurstLocked(k, &fx)
 		} else {
 			r.dropListenerLocked(bu, d)
 		}
@@ -440,23 +487,15 @@ func (r *Router) OnDisconnect(d id.DeviceID) {
 	}
 }
 
-// takeFloorLocked 频道空闲时让 d 拿到发言权；被占时提示占线并返回当前 Burst。
+// takeFloorLocked 让 d 开始一段发言。频道里可以多人同时说话，不再有占线。
 func (r *Router) takeFloorLocked(d id.DeviceID, now time.Time, fx *effects) *Burst {
 	ch, ok := r.members.ForegroundOf(id.Device(d))
 	if !ok {
 		return nil
 	}
 	speaker := id.Device(d)
-	if b := r.bursts[ch]; b != nil {
-		if b.Speaker == speaker {
-			b.stopAt = time.Time{}
-			return b
-		}
-		v := r.dev(d)
-		if !v.busyNotice {
-			v.busyNotice = true
-			fx.busy = append(fx.busy, d)
-		}
+	if b := r.bursts[burstKey{ch, speaker}]; b != nil {
+		b.stopAt = time.Time{}
 		return b
 	}
 
@@ -468,8 +507,9 @@ func (r *Router) takeFloorLocked(d id.DeviceID, now time.Time, fx *effects) *Bur
 	return r.startBurstLocked(ch, speaker, now, fx, nil)
 }
 
-// startBurstLocked 开始一段发言：听者是同频道里与发言者是好友的设备（小伙伴按主人判断），
-// allow 非 nil 时再按家长控制过滤。
+// startBurstLocked 开始一段发言：听者是同频道里的设备。区域频道只给与发言者是好友的设备（小伙伴按主人判断）；
+// 群是凭邀请码手动加入的，成员不要求是好友。allow 非 nil 时再按家长控制过滤。
+// 正在对频道说话的小伙伴的主人直接听自己的小伙伴，不是听者。
 func (r *Router) startBurstLocked(ch id.ChannelID, speaker id.ParticipantID, now time.Time, fx *effects, allow func(id.DeviceID) bool) *Burst {
 	owner := id.OwnerDevice(speaker)
 	b := &Burst{Channel: ch, Speaker: speaker, StartedAt: now, LastFrameAt: now}
@@ -478,39 +518,70 @@ func (r *Router) startBurstLocked(ch id.ChannelID, speaker id.ParticipantID, now
 		if md == owner || (allow != nil && !allow(md)) {
 			continue
 		}
-		if ok, _ := r.friends.AreFriends(context.Background(), speaker, m); ok {
+		if _, speaking := r.bursts[burstKey{ch, id.Agent(md)}]; speaking {
+			continue
+		}
+		if ch.IsGroup() {
+			b.Listeners = append(b.Listeners, m)
+		} else if ok, _ := r.friends.AreFriends(context.Background(), speaker, m); ok {
 			b.Listeners = append(b.Listeners, m)
 		}
 	}
-	r.bursts[ch] = b
-	start := &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "start", Source: sourceOf(speaker), From: string(owner), Name: r.names(owner)}
+	r.bursts[burstKey{ch, speaker}] = b
 	for _, l := range b.Listeners {
 		ld := id.OwnerDevice(l)
 		lv := r.dev(ld)
+		lv.hearing++
+		if lv.hearing > 1 {
+			continue // 已经在听别人说话，设备上本来就是"有人在说话"
+		}
 		if lv.aiSpeaking || lv.source == SourceAI {
 			fx.interrupt = append(fx.interrupt, ld)
 		}
 		lv.source = SourcePeer
-		fx.queued = append(fx.queued, queued{lv.out, start})
+		lv.heardSource, lv.heardFrom = sourceOf(speaker), owner
+		fx.queued = append(fx.queued, queued{lv.out, &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "start", Source: lv.heardSource, From: string(owner), Name: r.names(owner)}})
 	}
+	r.syncMixLocked(ch)
 	fx.events = append(fx.events, Event{Kind: BurstStarted, Burst: *b})
 	return b
 }
 
-func (r *Router) endBurstLocked(ch id.ChannelID, fx *effects) {
-	b := r.bursts[ch]
+func (r *Router) endBurstLocked(k burstKey, fx *effects) {
+	b := r.bursts[k]
 	if b == nil {
 		return
 	}
-	delete(r.bursts, ch)
+	delete(r.bursts, k)
 	for _, l := range b.Listeners {
-		r.stopListenerLocked(b, id.OwnerDevice(l), fx)
+		r.stopListenerLocked(id.OwnerDevice(l), fx)
+	}
+	if mx := r.syncMixLocked(k.ch); mx != nil {
+		fx.closeMix = append(fx.closeMix, mx)
 	}
 	fx.events = append(fx.events, Event{Kind: BurstEnded, Burst: *b})
 	if !b.FirstInAt.IsZero() && !b.FirstOutAt.IsZero() {
-		slog.Debug("burst ended", "channel", ch, "speaker", b.Speaker, "listeners", len(b.Listeners),
+		slog.Debug("burst ended", "channel", k.ch, "speaker", b.Speaker, "listeners", len(b.Listeners),
 			"internal_latency_ms", b.FirstOutAt.Sub(b.FirstInAt).Milliseconds())
 	}
+}
+
+// syncMixLocked 让混音状态跟上频道里的发言人数：≥2 人建，<2 人撤。撤掉的交给调用方在锁外关闭。
+func (r *Router) syncMixLocked(ch id.ChannelID) (closed *chanMix) {
+	n := 0
+	for k := range r.bursts {
+		if k.ch == ch {
+			n++
+		}
+	}
+	switch mx := r.mixers[ch]; {
+	case n >= 2 && mx == nil:
+		r.mixers[ch] = newChanMix()
+	case n < 2 && mx != nil:
+		delete(r.mixers, ch)
+		return mx
+	}
+	return nil
 }
 
 func (r *Router) dropListenerLocked(b *Burst, d id.DeviceID) {
@@ -519,7 +590,7 @@ func (r *Router) dropListenerLocked(b *Burst, d id.DeviceID) {
 		if l == p {
 			b.Listeners = append(b.Listeners[:i:i], b.Listeners[i+1:]...)
 			var fx effects
-			r.stopListenerLocked(b, d, &fx)
+			r.stopListenerLocked(d, &fx)
 			// 只入队，不做 I/O，可在锁内完成。
 			for _, q := range fx.queued {
 				q.out.pushMsg(q.msg)
@@ -529,16 +600,19 @@ func (r *Router) dropListenerLocked(b *Burst, d id.DeviceID) {
 	}
 }
 
-func (r *Router) stopListenerLocked(b *Burst, d id.DeviceID, fx *effects) {
+// stopListenerLocked 少一路发言在给 d 送声音；全部结束时才告诉设备"说完了"。
+func (r *Router) stopListenerLocked(d id.DeviceID, fx *effects) {
 	v := r.devices[d]
-	if v == nil {
+	if v == nil || v.hearing == 0 {
+		return
+	}
+	if v.hearing--; v.hearing > 0 {
 		return
 	}
 	if v.source == SourcePeer {
 		v.source = SourceNone
 	}
-	stop := &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "stop", Source: sourceOf(b.Speaker), From: string(id.OwnerDevice(b.Speaker))}
-	fx.queued = append(fx.queued, queued{v.out, stop})
+	fx.queued = append(fx.queued, queued{v.out, &protocol.SpeakerState{Type: protocol.TypeSpeakerState, State: "stop", Source: v.heardSource, From: string(v.heardFrom)}})
 }
 
 func sourceOf(p id.ParticipantID) string {
@@ -562,7 +636,7 @@ func (r *Router) expire() {
 	now := r.now()
 	var fx effects
 	r.mu.Lock()
-	for ch, b := range r.bursts {
+	for k, b := range r.bursts {
 		tailOver := !b.stopAt.IsZero() && now.After(b.stopAt)
 		timeout := frameTimeout
 		if b.Speaker.Kind() == id.KindAgent {
@@ -570,7 +644,7 @@ func (r *Router) expire() {
 		}
 		silent := now.Sub(b.LastFrameAt) > timeout
 		if tailOver || silent {
-			r.endBurstLocked(ch, &fx)
+			r.endBurstLocked(k, &fx)
 		}
 	}
 	for d, v := range r.devices {
@@ -585,7 +659,7 @@ func (r *Router) expire() {
 // effects 收集锁内决定、锁外执行的动作。
 type effects struct {
 	interrupt []id.DeviceID
-	busy      []id.DeviceID
+	closeMix  []*chanMix
 	woke      []id.DeviceID
 	listen    []listen
 	queued    []queued
@@ -613,16 +687,14 @@ func (fx *effects) apply(r *Router) {
 	for _, l := range fx.listen {
 		r.ai.Listen(l.d, l.on)
 	}
-	for _, d := range fx.busy {
-		p := id.Device(d)
-		_ = r.sink.Send(p, &protocol.Sound{Type: protocol.TypeSound, Name: "busy"})
-		_ = r.sink.Send(p, &protocol.Haptic{Type: protocol.TypeHaptic, Pattern: "tap"})
-	}
 	for _, d := range fx.woke {
 		// 唤醒被接受：提示音加聆听灯，让孩子知道小伙伴在听。
 		p := id.Device(d)
 		_ = r.sink.Send(p, &protocol.Sound{Type: protocol.TypeSound, Name: "wake"})
 		_ = r.sink.Send(p, &protocol.Light{Type: protocol.TypeLight, State: "listening"})
+	}
+	for _, m := range fx.closeMix {
+		m.close()
 	}
 	for _, e := range fx.events {
 		select {
@@ -630,5 +702,41 @@ func (fx *effects) apply(r *Router) {
 		default:
 			slog.Error("voice event dropped: subscriber too slow", "kind", e.Kind)
 		}
+	}
+}
+
+// mixTick 每 60ms 给有多人同时说话的频道各混一帧。听者名单在锁内取快照，解码与编码在锁外做。
+func (r *Router) mixTick() {
+	type job struct {
+		mx      *chanMix
+		sources []id.ParticipantID
+		targets []mixTarget
+	}
+	var jobs []job
+	r.mu.Lock()
+	for ch, mx := range r.mixers {
+		j := job{mx: mx}
+		idx := map[id.DeviceID]int{}
+		for k, b := range r.bursts {
+			if k.ch != ch {
+				continue
+			}
+			j.sources = append(j.sources, b.Speaker)
+			for _, l := range b.Listeners {
+				ld := id.OwnerDevice(l)
+				i, ok := idx[ld]
+				if !ok {
+					i = len(j.targets)
+					idx[ld] = i
+					j.targets = append(j.targets, mixTarget{listener: ld, out: r.dev(ld).out})
+				}
+				j.targets[i].from = append(j.targets[i].from, b.Speaker)
+			}
+		}
+		jobs = append(jobs, j)
+	}
+	r.mu.Unlock()
+	for _, j := range jobs {
+		j.mx.tick(j.sources, j.targets)
 	}
 }

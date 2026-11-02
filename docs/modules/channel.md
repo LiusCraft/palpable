@@ -16,7 +16,7 @@ func New(ctx, repo store.GroupRepo) (*Channels, error)       // 清理过期群�
 func (c *Channels) DefineZone(ch ChannelID, name string)     // zone 启动时登记区域频道
 func (c *Channels) JoinZone(ctx, d, ch) error                // 同时只在一个区域频道；加入即前台
 func (c *Channels) LeaveZone(ctx, d) error
-func (c *Channels) CreateGroup(ctx, owner, ttl GroupTTL) (code string, err error)
+func (c *Channels) CreateGroup(ctx, owner, ttl GroupTTL, name string) (code string, err error) // name 为孩子起的群名，空则「群聊+群码」；超过 12 字 ErrBadName
 func (c *Channels) JoinGroup(ctx, d, code) error             // ErrBadCode / ErrTooManyAttempts
 func (c *Channels) Switch(ctx, d, target string) error       // 群名 | 4 位码 | 频道 ID | "next" | "prev"
 func (c *Channels) Leave(ctx, d, ch) error                   // 群成员身份同时从存储删除
@@ -66,7 +66,7 @@ JoinGroup(d, code):
     限流：近 1 分钟错码 ≥ 5 → ErrTooManyAttempts
     找 Kind=group 且 Code==code 且未过期的群；没有 → 记一次错码，ErrBadCode
     成功 → 清空错码；repo.AddMember；joinLocked
-CreateGroup(owner, ttl):
+CreateGroup(owner, ttl, name):
     code = 随机 1000–9999，在「未过期的群」里唯一，最多试 50 次（ErrNoCodesAvailable）
     repo.Create + AddMember；joinLocked
 Switch(d, target):

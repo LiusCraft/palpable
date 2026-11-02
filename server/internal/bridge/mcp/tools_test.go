@@ -151,9 +151,24 @@ func TestBusinessToolsEndToEnd(t *testing.T) {
 		t.Fatal("switch to unknown")
 	}
 	g.call(t, dev, "self.group.create", "") // 默认今天有效
+	if r := g.call(t, dev, "self.group.create", `{"name":"一二三四五六七八九十一二三"}`); !r.IsError {
+		t.Fatal("too long group name accepted")
+	}
+	if r := g.call(t, dev, "self.group.create", `{"name":"小火箭队"}`); r.IsError {
+		t.Fatalf("group.create with name = %+v", r)
+	}
+	if r := g.call(t, dev, "self.group.list", ""); !strings.Contains(r.Text, "小火箭队」（现在在这个群）") {
+		t.Fatalf("group.list = %+v", r)
+	}
+	if r := g.call(t, dev, "self.group.list", ""); r.IsError || !strings.Contains(r.Text, "现在在这个群") {
+		t.Fatalf("group.list = %+v", r)
+	}
 
 	// 没加入任何频道的设备。
 	const lonely id.DeviceID = "02:00:00:00:00:0c"
+	if r := g.call(t, lonely, "self.group.list", ""); r.IsError || !strings.Contains(r.Text, "还没有") {
+		t.Fatalf("group.list without groups = %+v", r)
+	}
 	if r := g.call(t, lonely, "self.group.current", ""); !strings.Contains(r.Text, "只有我") {
 		t.Fatalf("current alone = %+v", r)
 	}

@@ -101,7 +101,7 @@ func TestGroupCodeJoinSwitchAndPersistence(t *testing.T) {
 	ctx := context.Background()
 
 	must(t, c.JoinZone(ctx, a, park))
-	code, err := c.CreateGroup(ctx, a, TTLForever)
+	code, err := c.CreateGroup(ctx, a, TTLForever, "")
 	must(t, err)
 	if len(code) != 4 {
 		t.Fatalf("code = %q", code)
@@ -153,7 +153,7 @@ func TestGroupCodeJoinSwitchAndPersistence(t *testing.T) {
 func TestGroupExpiry(t *testing.T) {
 	c, clk := newChannels(t, store.NewMemory())
 	ctx := context.Background()
-	code, err := c.CreateGroup(ctx, a, TTLTrip)
+	code, err := c.CreateGroup(ctx, a, TTLTrip, "")
 	must(t, err)
 	clk.t = clk.t.Add(7 * time.Hour)
 	if err := c.JoinGroup(ctx, b, code); !errors.Is(err, ErrBadCode) {
@@ -168,7 +168,7 @@ func TestGroupExpiry(t *testing.T) {
 		t.Fatal("foreground left after expiry")
 	}
 
-	code, err = c.CreateGroup(ctx, a, TTLForever)
+	code, err = c.CreateGroup(ctx, a, TTLForever, "")
 	must(t, err)
 	clk.t = clk.t.Add(1000 * time.Hour)
 	must(t, c.JoinGroup(ctx, b, code))
@@ -177,7 +177,7 @@ func TestGroupExpiry(t *testing.T) {
 func TestWrongCodeRateLimit(t *testing.T) {
 	c, clk := newChannels(t, store.NewMemory())
 	ctx := context.Background()
-	code, err := c.CreateGroup(ctx, a, TTLForever)
+	code, err := c.CreateGroup(ctx, a, TTLForever, "")
 	must(t, err)
 	wrong := "0000"
 	if wrong == code {
@@ -193,4 +193,22 @@ func TestWrongCodeRateLimit(t *testing.T) {
 	}
 	clk.t = clk.t.Add(61 * time.Second)
 	must(t, c.JoinGroup(ctx, b, code))
+}
+
+func TestCreateGroupName(t *testing.T) {
+	ctx := context.Background()
+	c, err := New(ctx, store.NewMemory().Groups())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateGroup(ctx, a, TTLToday, "一二三四五六七八九十一二三"); !errors.Is(err, ErrBadName) {
+		t.Fatalf("too long name err = %v", err)
+	}
+	if _, err := c.CreateGroup(ctx, a, TTLToday, "  小火箭队 "); err != nil {
+		t.Fatal(err)
+	}
+	info, err := c.Current(ctx, a)
+	if err != nil || info.Channel.Name != "小火箭队" {
+		t.Fatalf("name = %q, err = %v", info.Channel.Name, err)
+	}
 }

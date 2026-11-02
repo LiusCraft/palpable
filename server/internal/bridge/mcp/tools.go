@@ -28,10 +28,11 @@ type Zones interface {
 }
 
 type Channels interface {
-	CreateGroup(ctx context.Context, owner id.DeviceID, ttl channel.GroupTTL) (string, error)
+	CreateGroup(ctx context.Context, owner id.DeviceID, ttl channel.GroupTTL, name string) (string, error)
 	JoinGroup(ctx context.Context, d id.DeviceID, code string) error
 	Switch(ctx context.Context, d id.DeviceID, target string) error
 	Current(ctx context.Context, d id.DeviceID) (channel.ChannelInfo, error)
+	List(ctx context.Context, d id.DeviceID) []channel.ChannelInfo
 	Members(ch id.ChannelID) []id.ParticipantID
 }
 
@@ -168,20 +169,24 @@ func baseTools(s Services) []Tool {
 			},
 		},
 		{
-			Name:        "self.group.create",
-			Description: "创建一个语音群聊，得到 4 位数字群码，请把群码一个数字一个数字地念给小朋友，让好朋友说'加入群聊'加上这个码。",
-			InputSchema: schema(`{"ttl":{"type":"string","enum":["trip","today","forever"],"description":"有效期：trip 本次出游，today 今天，forever 长期"}}`),
+			Name: "self.group.create",
+			Description: "创建一个语音群聊。创建之前先问小朋友想给这个群取什么名字（不超过 12 个字，不要用真名、学校、地址、电话），再把名字作为 name 传入；" +
+				"得到 4 位数字群码，请把群码一个数字一个数字地念给小朋友，让好朋友说'加入群聊'加上这个码。",
+			InputSchema: schema(`{"name":{"type":"string","description":"小朋友给群取的名字，不超过 12 个字"},"ttl":{"type":"string","enum":["trip","today","forever"],"description":"有效期：trip 本次出游，today 今天，forever 长期"}}`),
 			Call: func(ctx context.Context, d id.DeviceID, args json.RawMessage) (ToolResult, error) {
 				var a struct {
-					TTL string `json:"ttl"`
+					Name string `json:"name"`
+					TTL  string `json:"ttl"`
 				}
 				_ = json.Unmarshal(args, &a)
 				ttl := map[string]channel.GroupTTL{"trip": channel.TTLTrip, "today": channel.TTLToday, "forever": channel.TTLForever}[a.TTL]
 				if a.TTL == "" {
 					ttl = channel.TTLToday
 				}
-				code, err := s.Channels.CreateGroup(ctx, d, ttl)
-				if err != nil {
+				code, err := s.Channels.CreateGroup(ctx, d, ttl, a.Name)
+				if errors.Is(err, channel.ErrBadName) {
+					return fail("这个名字有点长，换一个短一点的吧。")
+				} else if err != nil {
 					return ToolResult{}, err
 				}
 				return ok(fmt.Sprintf("群聊建好啦，群码是 %s，请一个数字一个数字地念给小朋友。", strings.Join(strings.Split(code, ""), " ")))
@@ -235,6 +240,28 @@ func baseTools(s Services) []Tool {
 					return ToolResult{}, err
 				}
 				return ok("现在在「" + info.Channel.Name + "」。")
+			},
+		},
+		{
+			Name:        "self.group.list",
+			Description: "看看我们加入了哪些群聊，现在在哪一个。",
+			InputSchema: noArgs(),
+			Call: func(ctx context.Context, d id.DeviceID, _ json.RawMessage) (ToolResult, error) {
+				var names []string
+				for _, info := range s.Channels.List(ctx, d) {
+					if info.Channel.Kind != channel.KindGroup {
+						continue
+					}
+					name := "「" + info.Channel.Name + "」"
+					if info.Foreground {
+						name += "（现在在这个群）"
+					}
+					names = append(names, name)
+				}
+				if len(names) == 0 {
+					return ok("还没有加入任何群聊。")
+				}
+				return ok("加入的群聊有：" + strings.Join(names, "、") + "。")
 			},
 		},
 		{

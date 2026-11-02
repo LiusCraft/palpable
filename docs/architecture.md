@@ -191,7 +191,7 @@
 | 只听主人 | 小伙伴的输入只有主人设备的 AI 回合；频道里别家孩子的音频从不送进它的灵矽会话 |
 | 只在点名时开口 | 必须先有 `self.channel.speak`，且一次只管一段话 |
 | 只到好友 | 听者由 `relation.AreFriends(agt:<mac>, 听者)` 计算，智能体按主人判断 |
-| 一次一个声音 | 和设备共用发言权；小伙伴说话时别人开口收到 `busy`，主人开口则小伙伴让路 |
+| 可与他人同时说话 | 频道允许多人同时说话（服务端混音）；好友开口不会打断小伙伴，主人自己开口则小伙伴让路 |
 
 **接缝**：频道成员、发言人、听者都用 `ParticipantID`；`voice` 只经 `Sink` 收发；`relation.AreFriends` 经 `OwnerDevice` 解析；`bridge/linx` 会话不变，`app` 只在交给它的 `DeviceLink` 外包一层 `agentTap`。
 

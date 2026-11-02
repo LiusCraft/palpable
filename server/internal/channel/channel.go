@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/store"
@@ -27,12 +28,14 @@ const (
 	groupIDPrefix   = "group:"
 	zoneIDPrefix    = "zone:"
 	groupNamePrefix = "群聊"
+	maxGroupName    = 12 // 字数；要能让孩子一口气说出来、设备屏幕放得下
 )
 
 var (
 	ErrNotInChannel     = errors.New("channel: not in any channel")
 	ErrNoSuchChannel    = errors.New("channel: no such channel")
 	ErrBadCode          = errors.New("channel: wrong or expired code")
+	ErrBadName          = errors.New("channel: group name too long")
 	ErrTooManyAttempts  = errors.New("channel: too many wrong codes, try again later")
 	ErrNoCodesAvailable = errors.New("channel: no free group code")
 )
@@ -182,7 +185,12 @@ func (c *Channels) LeaveZone(_ context.Context, d id.DeviceID) error {
 	return nil
 }
 
-func (c *Channels) CreateGroup(ctx context.Context, owner id.DeviceID, ttl GroupTTL) (string, error) {
+// CreateGroup 建群并让 owner 加入。name 是孩子起的群名，为空时用「群聊+群码」。
+func (c *Channels) CreateGroup(ctx context.Context, owner id.DeviceID, ttl GroupTTL, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > maxGroupName {
+		return "", ErrBadName
+	}
 	now := c.now()
 	c.mu.Lock()
 	code, err := c.freeCodeLocked(now)
@@ -190,7 +198,10 @@ func (c *Channels) CreateGroup(ctx context.Context, owner id.DeviceID, ttl Group
 	if err != nil {
 		return "", err
 	}
-	g := store.Group{ID: id.ChannelID(groupIDPrefix + id.New()), Name: groupNamePrefix + code, Owner: owner, Code: code, ExpiresAt: expiry(now, ttl)}
+	if name == "" {
+		name = groupNamePrefix + code
+	}
+	g := store.Group{ID: id.ChannelID(groupIDPrefix + id.New()), Name: name, Owner: owner, Code: code, ExpiresAt: expiry(now, ttl)}
 	if err := c.repo.Create(ctx, g); err != nil {
 		return "", fmt.Errorf("create group: %w", err)
 	}
