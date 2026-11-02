@@ -18,6 +18,37 @@ type Config struct {
 	WeChat WeChat `yaml:"wechat"`
 	Linx   Linx   `yaml:"linx"`
 	Demo   Demo   `yaml:"demo"`
+	Ops    Ops    `yaml:"ops"`
+}
+
+// Ops 是与厂家后台（palpable-admin）的对接，见 docs/factory.md §5。令牌只允许出现在这个文件里。
+type Ops struct {
+	// Token 非空时开放 /internal/devices/*（登记与吊销公钥、恢复出厂、锁定），后台带它来调用。该路径不应暴露到公网。
+	Token string `yaml:"token"`
+	// AdminURL 非空时，绑定与解绑会推送给后台；AdminToken 是后台的 inbound_token。
+	AdminURL   string `yaml:"admin_url"`
+	AdminToken string `yaml:"admin_token"`
+	// OwnerHMACKey 用来把家长标识做成后台无法还原的 owner_ref。只存在于这里，不得发给后台。
+	OwnerHMACKey string `yaml:"owner_hmac_key"`
+}
+
+const minSecretLen = 16
+
+// Validate 检查对接配置：弱令牌、缺密钥都直接拒绝启动，免得上线后才发现后台能被猜中令牌。
+func (o Ops) Validate() error {
+	if o.Token != "" && len(o.Token) < minSecretLen {
+		return fmt.Errorf("ops.token must be at least %d characters", minSecretLen)
+	}
+	if o.AdminURL == "" {
+		return nil
+	}
+	if len(o.AdminToken) < minSecretLen {
+		return fmt.Errorf("ops.admin_token must be at least %d characters when ops.admin_url is set", minSecretLen)
+	}
+	if len(o.OwnerHMACKey) < minSecretLen {
+		return fmt.Errorf("ops.owner_hmac_key must be at least %d characters when ops.admin_url is set", minSecretLen)
+	}
+	return nil
 }
 
 // Auth 是设备认证配置，规则见 docs/trust.md §2。

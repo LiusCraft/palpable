@@ -65,3 +65,26 @@ func TestExampleConfigLoads(t *testing.T) {
 		t.Fatal("example config must not ship WeChat credentials")
 	}
 }
+
+func TestOpsValidate(t *testing.T) {
+	long := "0123456789abcdef"
+	for name, o := range map[string]Ops{
+		"empty is fine":        {},
+		"token only":           {Token: long},
+		"full":                 {Token: long, AdminURL: "http://admin", AdminToken: long, OwnerHMACKey: long},
+		"hook without token":   {AdminURL: "http://admin", OwnerHMACKey: long},
+		"hook without hmac":    {AdminURL: "http://admin", AdminToken: long},
+		"weak ops token":       {Token: "short"},
+		"hook with weak token": {AdminURL: "http://admin", AdminToken: "short", OwnerHMACKey: long},
+	} {
+		err := o.Validate()
+		wantOK := name == "empty is fine" || name == "token only" || name == "full"
+		if (err == nil) != wantOK {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	cfg, err := Load(write(t, "ops:\n  token: abc\n"))
+	if err != nil || cfg.Ops.Token != "abc" {
+		t.Fatalf("ops section not parsed: %+v %v", cfg.Ops, err)
+	}
+}

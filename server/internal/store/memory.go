@@ -17,6 +17,7 @@ type Memory struct {
 	mu          sync.Mutex
 	devices     map[id.DeviceID]Device
 	keys        map[id.DeviceID]DeviceKey
+	blocks      map[id.DeviceID]DeviceBlock
 	styles      map[string]Style
 	guardians   map[id.GuardianID]Guardian
 	sessions    map[string]Session
@@ -32,6 +33,7 @@ func NewMemory() *Memory {
 	return &Memory{
 		devices:     map[id.DeviceID]Device{},
 		keys:        map[id.DeviceID]DeviceKey{},
+		blocks:      map[id.DeviceID]DeviceBlock{},
 		styles:      map[string]Style{},
 		guardians:   map[id.GuardianID]Guardian{},
 		sessions:    map[string]Session{},
@@ -44,14 +46,15 @@ func NewMemory() *Memory {
 
 func (m *Memory) Close() error { return nil }
 
-func (m *Memory) Devices() DeviceRepo         { return memDevices{m} }
-func (m *Memory) DeviceKeys() DeviceKeyRepo   { return memDeviceKeys{m} }
-func (m *Memory) Styles() StyleRepo           { return memStyles{m} }
-func (m *Memory) Guardians() GuardianRepo     { return memGuardians{m} }
-func (m *Memory) Sessions() SessionRepo       { return memSessions{m} }
-func (m *Memory) Friendships() FriendshipRepo { return memFriendships{m} }
-func (m *Memory) Groups() GroupRepo           { return memGroups{m} }
-func (m *Memory) History() HistoryRepo        { return memHistory{m} }
+func (m *Memory) Devices() DeviceRepo           { return memDevices{m} }
+func (m *Memory) DeviceKeys() DeviceKeyRepo     { return memDeviceKeys{m} }
+func (m *Memory) DeviceBlocks() DeviceBlockRepo { return memDeviceBlocks{m} }
+func (m *Memory) Styles() StyleRepo             { return memStyles{m} }
+func (m *Memory) Guardians() GuardianRepo       { return memGuardians{m} }
+func (m *Memory) Sessions() SessionRepo         { return memSessions{m} }
+func (m *Memory) Friendships() FriendshipRepo   { return memFriendships{m} }
+func (m *Memory) Groups() GroupRepo             { return memGroups{m} }
+func (m *Memory) History() HistoryRepo          { return memHistory{m} }
 
 // ---- device ----
 
@@ -585,5 +588,41 @@ func (r memDeviceKeys) Create(_ context.Context, k DeviceKey) error {
 	k.PublicKey = slices.Clone(k.PublicKey)
 	k.CreatedAt = roundMillis(k.CreatedAt)
 	r.m.keys[k.Device] = k
+	return nil
+}
+
+func (r memDeviceKeys) Delete(_ context.Context, d id.DeviceID) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	delete(r.m.keys, d)
+	return nil
+}
+
+// ---- device_block ----
+
+type memDeviceBlocks struct{ m *Memory }
+
+func (r memDeviceBlocks) Put(_ context.Context, b DeviceBlock) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	b.CreatedAt = roundMillis(b.CreatedAt)
+	r.m.blocks[b.Device] = b
+	return nil
+}
+
+func (r memDeviceBlocks) Get(_ context.Context, d id.DeviceID) (DeviceBlock, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	b, ok := r.m.blocks[d]
+	if !ok {
+		return DeviceBlock{}, fmt.Errorf("get device block %s: %w", d, ErrNotFound)
+	}
+	return b, nil
+}
+
+func (r memDeviceBlocks) Delete(_ context.Context, d id.DeviceID) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	delete(r.m.blocks, d)
 	return nil
 }

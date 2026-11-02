@@ -1,0 +1,23 @@
+# 厂家后台（palpable-admin）配置。复制为 admin.config.yaml 后修改；该文件含密钥，已被 .gitignore 忽略。
+addr: ":8090"
+db_path: palpable-admin.db   # 独立于 palpabled 的库
+static_dir: ../admin/dist    # 管理页面的构建产物；开发时留空，用 vite dev server
+
+# 与 palpabled 的对接，见 docs/factory.md §5。
+#   http：生产。none：不对接（默认），需要 palpabled 配合的动作会被拒绝。noop：仅本地开发，擦除/挂失会"假成功"。
+platform:
+  mode: none
+  base_url: http://127.0.0.1:8080
+  token: ""
+
+# palpabled 推送绑定/解绑事件时带的令牌；留空则不开放 /internal/platform-events。
+inbound_token: ""
+
+# 库里没有任何账号时，用它创建首个管理员（口令至少 10 位）。登录后立刻改口令，再把这里清空。
+bootstrap_admin:
+  username: ""
+  password: ""
+
+warranty:
+  new_months: 12
+  refurb_months: 6

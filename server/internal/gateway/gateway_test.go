@@ -407,3 +407,41 @@ func TestHandshakeMessagesRejectedAfterHandshake(t *testing.T) {
 		t.Fatalf("got %s", m)
 	}
 }
+
+type admitFunc func(ctx context.Context, d id.DeviceID) error
+
+func (f admitFunc) Admit(ctx context.Context, d id.DeviceID) error { return f(ctx, d) }
+
+func TestAdmissionRefusesBlockedDevice(t *testing.T) {
+	gw := newGateway(nil)
+	gw.SetAdmission(admitFunc(func(_ context.Context, d id.DeviceID) error {
+		if d == "02:00:00:00:00:01" {
+			return errors.New("locked")
+		}
+		return nil
+	}))
+	ws := dial(t, gw)
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(helloJSON)); err != nil {
+		t.Fatal(err)
+	}
+	_, data, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"code":"unauthorized"`) || strings.Contains(string(data), "hello.ack") {
+		t.Fatalf("blocked device got %s", data)
+	}
+	if _, ok := gw.Session("02:00:00:00:00:01"); ok {
+		t.Fatal("blocked device registered a session")
+	}
+
+	// 其他设备不受影响。
+	ws2 := dial(t, gw)
+	other := strings.Replace(helloJSON, "02:00:00:00:00:01", "02:00:00:00:00:02", 1)
+	if err := ws2.WriteMessage(websocket.TextMessage, []byte(other)); err != nil {
+		t.Fatal(err)
+	}
+	if _, data, err = ws2.ReadMessage(); err != nil || !strings.Contains(string(data), "hello.ack") {
+		t.Fatalf("other device: %v %s", err, data)
+	}
+}

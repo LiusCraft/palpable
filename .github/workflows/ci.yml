@@ -43,9 +43,14 @@ jobs:
           cache-dependency-path: |
             web/pnpm-lock.yaml
             miniprogram/pnpm-lock.yaml
+            admin/pnpm-lock.yaml
 
       - name: Install web dependencies
         working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install admin dependencies
+        working-directory: admin
         run: pnpm install --frozen-lockfile
 
       - name: Install miniprogram dependencies

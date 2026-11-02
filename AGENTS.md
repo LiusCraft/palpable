@@ -17,6 +17,7 @@ Web 模拟器与未来固件是**同一个协议的两个客户端**。所有业
 | --- | --- |
 | 后端 | Go 1.26，标准库 `net/http`，`gorilla/websocket`，`log/slog`；存储先用 SQLite（`modernc.org/sqlite`，免 CGO），接口隔离便于换库 |
 | 前端 | React 19 + TypeScript（strict）+ Vite；3D 用 `three` + `@react-three/fiber` + `@react-three/drei`；状态用 `zustand`；样式用 Tailwind CSS；包管理 pnpm |
+| 厂家后台 | 独立 Go 进程 `palpable-admin`（`server/cmd/palpable-admin`，独立 SQLite）+ React 19 + TypeScript（strict）+ Vite + Tailwind 4 + shadcn/ui（`admin/`，pnpm）。见 [docs/factory.md](docs/factory.md) |
 | 家长端 | 原生微信小程序 + TypeScript（strict）+ TDesign 小程序组件库；包管理 pnpm（`nodeLinker: hoisted`）。见 [docs/modules/miniprogram.md](docs/modules/miniprogram.md) |
 | 协议 | JSON Schema 为单一事实来源，放 `protocol/`；TS 类型由其生成（`make gen`），Go 类型手写并由契约测试对照 schema 校验 |
 | 音频 | 与灵矽对齐：Opus、16kHz、单声道、60ms 帧，WebSocket 二进制帧 |
@@ -34,6 +35,7 @@ palpable/
 ├── web/               前端
 │   └── src/           device-sim / scenes / map / ui / shared
 ├── miniprogram/       家长端微信小程序：开发者工具导入这一层；源码在 src/（pages / components / services / utils / legal）
+├── admin/             厂家后台页面（React + shadcn/ui），对应独立进程 palpable-admin，见 docs/factory.md
 ├── firmware/          预留：未来硬件固件，只实现 protocol/ 的设备端
 └── docs/              产品、架构、模块、灵矽对接、路线图（入口：docs/README.md）
 ```
@@ -58,12 +60,20 @@ Go
 - 每次修改后执行 `pnpm check`（在 `miniprogram/` 下）。页面可见文字只从 `utils/copy.ts` 取；WXML 不调用函数。
 - 同意隐私政策前不登录、不请求服务端；不获取手机号、头像、位置等用不到的信息。
 
+厂家后台（`server/internal/factory` 等）
+- 与 palpabled 不共用数据库、不 import 其 `device`、`store` 包；对 palpabled 的调用只经 `factory.Platform` 端口。
+- 状态流转规则只在 `factory/lifecycle.go`；页面不做业务判断，按钮来自接口返回的 `actions`。
+- `unit_event` 只追加，不得增加更新或删除它的代码路径。
+
 TypeScript / React
 - `strict` 打开，禁止 `any`；协议类型只从生成的 `protocol` 包导入。
 - 3D 组件只负责渲染，状态放 store；动画由"设备状态"驱动，不在组件里写业务逻辑。
 - 新增依赖前先确认必要性，优先用 `drei` 已有能力。
 
 ## 儿童隐私与安全（硬约束）
+
+- **厂家后台 MUST NOT 接触孩子与家长的可识别信息**：库里只能有序列号、MAC、公钥、批次、渠道、订单号与 `owner_ref`（palpabled 对家长标识做 HMAC 后的值）。不得在后台加孩子名字、位置、好友、历史、微信信息等字段。订单号不得填买家姓名、电话、地址。
+- 设备进入可再销售状态（质检通过、翻新入库）前，MUST 先在 palpabled 擦除成功；擦除不可用时动作失败，不得跳过。
 
 - 陌生设备之间默认互相屏蔽：未建立好友关系的设备，音频 MUST NOT 被转发，也不应出现在对方的在线列表中。
 - 声纹只存特征与绑定关系，不长期保留原始音频；删除设备时同时删除声纹。例外（产品已允许）：引导智能体在灵矽侧保留引导对话的音频，用于登记声纹，见 [docs/linx-integration.md](docs/linx-integration.md#产品决定)。

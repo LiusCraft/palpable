@@ -36,6 +36,14 @@ func (b *Binder) Revoke(id)
 func (b *Binder) Claim(ctx, GuardianID, code, voiceConsent bool) (id, error)  // ErrBadBindCode / ErrTooManyTries（同一家长 10 分钟 5 次）
 func (b *Binder) Subscribe() <-chan Bound                                // {Device, Guardian}
 
+// 出厂清单与封锁：由厂家后台经 /internal 驱动，全部幂等。规则见 docs/factory.md §5
+type Registry struct{}
+func NewRegistry(store.DeviceKeyRepo, store.DeviceBlockRepo) *Registry
+func (r *Registry) Enroll(ctx, id, pubkey []byte) error    // 同钥重复 nil；异钥 ErrKeyMismatch；已吊销 ErrRevoked
+func (r *Registry) Revoke(ctx, id) error                    // 删公钥 + 永久封锁（open 模式也不能重新登记）
+func (r *Registry) SetLock(ctx, id, locked bool) error      // 已吊销的不被降级；解锁已吊销的 ErrRevoked
+func (r *Registry) Admit(ctx, id) error                     // 供网关准入：ErrDeviceLocked / ErrRevoked
+
 // 设备认证：服务端只存公钥。规则见 docs/trust.md §2
 type Authenticator struct{}
 func NewAuthenticator(store.DeviceKeyRepo, Enrollment) (*Authenticator, error)  // open | manifest | off

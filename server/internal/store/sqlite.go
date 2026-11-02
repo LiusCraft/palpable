@@ -41,14 +41,15 @@ func Open(ctx context.Context, path string) (*SQLite, error) {
 
 func (s *SQLite) Close() error { return s.db.Close() }
 
-func (s *SQLite) Devices() DeviceRepo         { return sqlDevices{s.db} }
-func (s *SQLite) DeviceKeys() DeviceKeyRepo   { return sqlDeviceKeys{s.db} }
-func (s *SQLite) Styles() StyleRepo           { return sqlStyles{s.db} }
-func (s *SQLite) Guardians() GuardianRepo     { return sqlGuardians{s.db} }
-func (s *SQLite) Sessions() SessionRepo       { return sqlSessions{s.db} }
-func (s *SQLite) Friendships() FriendshipRepo { return sqlFriendships{s.db} }
-func (s *SQLite) Groups() GroupRepo           { return sqlGroups{s.db} }
-func (s *SQLite) History() HistoryRepo        { return sqlHistory{s.db} }
+func (s *SQLite) Devices() DeviceRepo           { return sqlDevices{s.db} }
+func (s *SQLite) DeviceKeys() DeviceKeyRepo     { return sqlDeviceKeys{s.db} }
+func (s *SQLite) DeviceBlocks() DeviceBlockRepo { return sqlDeviceBlocks{s.db} }
+func (s *SQLite) Styles() StyleRepo             { return sqlStyles{s.db} }
+func (s *SQLite) Guardians() GuardianRepo       { return sqlGuardians{s.db} }
+func (s *SQLite) Sessions() SessionRepo         { return sqlSessions{s.db} }
+func (s *SQLite) Friendships() FriendshipRepo   { return sqlFriendships{s.db} }
+func (s *SQLite) Groups() GroupRepo             { return sqlGroups{s.db} }
+func (s *SQLite) History() HistoryRepo          { return sqlHistory{s.db} }
 
 // migrate 按文件名顺序执行 migrations/ 下的脚本，已执行到第几个记在 PRAGMA user_version。
 func migrate(ctx context.Context, db *sql.DB) error {
@@ -673,6 +674,44 @@ func (r sqlDeviceKeys) Create(ctx context.Context, k DeviceKey) error {
 	}
 	if err != nil {
 		return fmt.Errorf("create device key %s: %w", k.Device, err)
+	}
+	return nil
+}
+
+func (r sqlDeviceKeys) Delete(ctx context.Context, d id.DeviceID) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM device_key WHERE device_id = ?`, d); err != nil {
+		return fmt.Errorf("delete device key %s: %w", d, err)
+	}
+	return nil
+}
+
+// ---- device_block ----
+
+type sqlDeviceBlocks struct{ db *sql.DB }
+
+func (r sqlDeviceBlocks) Put(ctx context.Context, b DeviceBlock) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO device_block (device_id, reason, created_at) VALUES (?, ?, ?)
+ON CONFLICT(device_id) DO UPDATE SET reason = excluded.reason`, b.Device, b.Reason, toMillis(b.CreatedAt))
+	if err != nil {
+		return fmt.Errorf("put device block %s: %w", b.Device, err)
+	}
+	return nil
+}
+
+func (r sqlDeviceBlocks) Get(ctx context.Context, d id.DeviceID) (DeviceBlock, error) {
+	b := DeviceBlock{Device: d}
+	var created int64
+	err := r.db.QueryRowContext(ctx, `SELECT reason, created_at FROM device_block WHERE device_id = ?`, d).Scan(&b.Reason, &created)
+	if err != nil {
+		return DeviceBlock{}, fmt.Errorf("get device block %s: %w", d, notFoundIfNoRows(err))
+	}
+	b.CreatedAt = fromMillis(created)
+	return b, nil
+}
+
+func (r sqlDeviceBlocks) Delete(ctx context.Context, d id.DeviceID) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM device_block WHERE device_id = ?`, d); err != nil {
+		return fmt.Errorf("delete device block %s: %w", d, err)
 	}
 	return nil
 }

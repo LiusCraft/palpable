@@ -24,7 +24,14 @@ type Config struct {
     WeChat WeChat
     Linx   Linx
     Demo   Demo
+    Ops    Ops
 }
+type Ops struct {                   // 与厂家后台的对接，见 docs/factory.md §5
+    Token string                    // 非空才开放 /internal/devices/*；至少 16 位
+    AdminURL, AdminToken string     // 非空才向后台推送绑定/解绑事件；AdminToken 至少 16 位
+    OwnerHMACKey string             // 家长标识 → owner_ref 的 HMAC 密钥，至少 16 位，只在这里
+}
+func (o Ops) Validate() error       // 弱令牌、缺密钥 → app.New 拒绝启动
 type Auth struct {
     Enrollment string   // open（默认）| manifest | off，见 docs/trust.md §2.3
 }
