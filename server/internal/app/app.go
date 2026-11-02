@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/LiusCraft/palpable/server/internal/account"
+	"github.com/LiusCraft/palpable/server/internal/adminhook"
 	"github.com/LiusCraft/palpable/server/internal/bridge/linx"
 	"github.com/LiusCraft/palpable/server/internal/bridge/mcp"
 	"github.com/LiusCraft/palpable/server/internal/channel"
@@ -23,6 +24,7 @@ import (
 	"github.com/LiusCraft/palpable/server/internal/history"
 	"github.com/LiusCraft/palpable/server/internal/id"
 	"github.com/LiusCraft/palpable/server/internal/linxapi"
+	"github.com/LiusCraft/palpable/server/internal/opsapi"
 	"github.com/LiusCraft/palpable/server/internal/parentapi"
 	"github.com/LiusCraft/palpable/server/internal/protocol"
 	"github.com/LiusCraft/palpable/server/internal/relation"
@@ -68,6 +70,12 @@ type App struct {
 	history *history.History
 	world   *world.World // 仅演示模式
 	gw      *gateway.Gateway
+	// registry 管出厂公钥与设备封锁；hook 把绑定事件推给厂家后台（未配置时为 nil）。
+	registry *device.Registry
+	hook     *adminhook.Client
+	opsToken string
+	ownerKey []byte
+
 	// accounts 是微信登录的家长账号；未配置小程序时为 nil，家长端只认演示令牌。
 	accounts *account.Accounts
 
@@ -93,15 +101,19 @@ type deps struct {
 	// requireBind 在产品里总为 true；测试默认 false，只有绑定相关的用例打开。
 	requireBind bool
 	// wx 为 nil 时不开放微信登录。
-	wx wechat.Client
+	wx  wechat.Client
+	ops config.Ops
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
+	if err := cfg.Ops.Validate(); err != nil {
+		return nil, err
+	}
 	db, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return nil, err
 	}
-	d := deps{store: db, demo: cfg.Demo, enrollment: device.Enrollment(cfg.Auth.Enrollment), requireBind: true}
+	d := deps{store: db, demo: cfg.Demo, enrollment: device.Enrollment(cfg.Auth.Enrollment), requireBind: true, ops: cfg.Ops}
 	if cfg.Linx.Enabled() {
 		d.ai = linx.New(linx.Config{URL: cfg.Linx.WSURL, Token: cfg.Linx.Token})
 		d.linx = linxapi.New(cfg.Linx.APIBase, cfg.Linx.Token).WithOTA(cfg.Linx.OTAURL)
@@ -172,6 +184,13 @@ func newApp(ctx context.Context, d deps) (*App, error) {
 		d.ai.OnMCP(a.mcp.OnLinxMCP)
 	}
 	a.gw = gateway.New(a, allowDevOrigin)
+	a.registry = device.NewRegistry(d.store.DeviceKeys(), d.store.DeviceBlocks())
+	a.gw.SetAdmission(a.registry)
+	a.opsToken = d.ops.Token
+	if d.ops.AdminURL != "" {
+		a.hook = adminhook.New(d.ops.AdminURL, d.ops.AdminToken)
+		a.ownerKey = []byte(d.ops.OwnerHMACKey)
+	}
 	if d.enrollment != "" {
 		auth, err := device.NewAuthenticator(d.store.DeviceKeys(), d.enrollment)
 		if err != nil {
@@ -202,6 +221,9 @@ func (a *App) Start(ctx context.Context) {
 	go a.bindEvents(ctx)
 	go a.sweepGroups(ctx)
 	go a.sweepFriends(ctx)
+	if a.hook != nil {
+		go a.hook.Run(ctx)
+	}
 	if a.accounts != nil {
 		go a.sweepSessions(ctx)
 	}
@@ -224,6 +246,9 @@ func (a *App) Handler() http.Handler {
 			api.EnableAccounts(accountAPI{Accounts: a.accounts, app: a})
 		}
 		mux.Handle("/api/", api)
+	}
+	if a.opsToken != "" {
+		mux.Handle("/internal/", opsapi.New(a.opsToken, a))
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -322,6 +347,7 @@ func (a *App) applyDemo(ctx context.Context, p device.Profile) device.Profile {
 		return p
 	}
 	p.Guardian = g
+	a.notifyActivated(p.ID, g)
 	// 演示默认"孩子自己交友、事后通知"，贴一贴两个孩子都说好就成为好友；产品默认需家长批准。
 	if !a.demo.FriendNeedsApproval {
 		if err := a.devices.SetFriendPolicy(ctx, p.ID, device.FriendNotify); err == nil {

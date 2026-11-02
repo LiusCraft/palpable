@@ -1,4 +1,4 @@
-.PHONY: gen gen-check fmt-check build lint test vet cover check miniprogram-check dev-server dev-web firmware-test firmware-smoke
+.PHONY: enroll-device gen gen-check fmt-check build lint test vet cover check miniprogram-check dev-server dev-web dev-admin dev-admin-web firmware-test firmware-smoke
 
 # PR 要求的后端单测覆盖率下限
 MIN_COVERAGE ?= 90
@@ -21,9 +21,11 @@ gen-check: gen
 build:
 	cd server && go build ./...
 	cd web && pnpm run build
+	cd admin && pnpm run build
 
 lint:
 	cd web && pnpm run lint
+	cd admin && pnpm run lint
 
 test:
 	cd server && go test ./...
@@ -44,11 +46,27 @@ miniprogram-check:
 # 每次改动后的完整检查
 check: gen-check fmt-check lint vet cover build miniprogram-check
 
+# manifest 模式下登记一台设备（如 Web 模拟器）的公钥：MAC 与 PUBKEY 取自 palpabled 的
+# "device authentication failed" 日志。令牌从 server/config.yaml 的 ops.token 读取，不回显。
+enroll-device:
+	@test -n "$(MAC)" && test -n "$(PUBKEY)" || { echo 'usage: make enroll-device MAC=aa:bb:cc:dd:ee:ff PUBKEY=<base64>'; exit 1; }
+	@TOKEN=$$(awk '/^ops:/{f=1;next} f&&/^[^ ]/{f=0} f&&$$1=="token:"{print $$2}' server/config.yaml | tr -d '"'); \
+	test -n "$$TOKEN" || { echo 'ops.token missing in server/config.yaml'; exit 1; }; \
+	curl -sS -w 'HTTP %{http_code}\n' -X PUT -H "Authorization: Bearer $$TOKEN" -H 'Content-Type: application/json' \
+		-d '{"public_key":"$(PUBKEY)"}' "http://127.0.0.1:8080/internal/devices/$(MAC)/key"
+
 dev-server:
 	cd server && go run ./cmd/palpabled
 
 dev-web:
 	cd web && pnpm run dev
+
+# 厂家后台：后端（:8090，读 server/admin.config.yaml）与页面（:5174，/api 代理到后端）
+dev-admin:
+	cd server && go run ./cmd/palpable-admin
+
+dev-admin-web:
+	cd admin && pnpm run dev
 
 # 不依赖 ESP-IDF；可用 -DCJSON_SOURCE_DIR=... 离线运行。
 firmware-test:

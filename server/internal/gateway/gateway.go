@@ -42,11 +42,17 @@ type Authenticator interface {
 	Verify(ctx context.Context, d id.DeviceID, pubkey []byte, nonce string, sig []byte) error
 }
 
+// Admission 在握手后、认证前决定设备能否连接（厂家后台挂失或吊销的设备被拒绝）。
+type Admission interface {
+	Admit(ctx context.Context, d id.DeviceID) error
+}
+
 // Gateway 管理所有设备会话。
 type Gateway struct {
 	handler  Handler
 	upgrader websocket.Upgrader
 	auth     Authenticator // nil 表示不认证
+	admit    Admission     // nil 表示不设准入
 
 	mu       sync.RWMutex
 	sessions map[id.DeviceID]*Session
@@ -66,6 +72,9 @@ func New(handler Handler, checkOrigin func(r *http.Request) bool) *Gateway {
 
 // SetAuth 须在开始接受连接前调用。
 func (g *Gateway) SetAuth(a Authenticator) { g.auth = a }
+
+// SetAdmission 须在开始接受连接前调用。
+func (g *Gateway) SetAdmission(a Admission) { g.admit = a }
 
 func (g *Gateway) authRequired() bool { return g.auth != nil && g.auth.Required() }
 
@@ -108,6 +117,14 @@ func (g *Gateway) run(ctx context.Context, ws *websocket.Conn) {
 	s.skin = hello.Skin
 	s.firmware = hello.Firmware
 	s.capabilities = hello.Capabilities
+
+	if g.admit != nil {
+		if err := g.admit.Admit(ctx, s.deviceID); err != nil {
+			_ = s.Send(errorMsg(protocol.CodeUnauthorized, "device not allowed"))
+			slog.Warn("device refused", "device_id", s.deviceID, "reason", err)
+			return
+		}
+	}
 
 	if g.authRequired() {
 		if err := g.authenticate(ctx, s, hello, deadline); err != nil {

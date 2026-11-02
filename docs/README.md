@@ -8,6 +8,7 @@
 | [architecture.md](architecture.md) | 系统怎么拆、怎么协作 | 系统边界、关键决策、分层与依赖规则、设备组织方式、关键时序、隐私规则的执行点、扩展路径、开放问题 |
 | [research.md](research.md) | 别人怎么做、证据是什么 | 按功能的对标调研、来源与缺口 |
 | [modules/](modules/README.md) | 每个模块的设计 | 模块边界、接口、数据结构、关键流程（伪代码）、约束 |
+| [factory.md](factory.md) | 设备从出厂到售出、退货、二手、报废怎么管 | 设备生命周期、状态与动作表、数据边界（厂家看不到孩子）、厂家后台与 palpabled 的协作 |
 | [testing.md](testing.md) | 怎么验证 | 测试分层、检查命令、覆盖率门槛、已知缺口 |
 | [linx-integration.md](linx-integration.md) | 灵矽能做什么、有什么限制 | 灵矽的能力、已确认的事实、待验证项 |
 | [tasks.md](tasks.md) | 做到哪了、下一步做什么 | 里程碑、**完成状态**、任务包与验收 |

@@ -349,6 +349,33 @@ func TestDeviceKeys(t *testing.T) {
 	})
 }
 
+func TestDeviceKeyDeleteAndBlocks(t *testing.T) {
+	run(t, func(t *testing.T, ctx context.Context, s Store) {
+		k := s.DeviceKeys()
+		must(t, k.Delete(ctx, macA)) // 不存在也不报错
+		must(t, k.Create(ctx, DeviceKey{Device: macA, PublicKey: []byte{1}, CreatedAt: t0}))
+		must(t, k.Delete(ctx, macA))
+		_, err := k.Get(ctx, macA)
+		wantErr(t, err, ErrNotFound)
+		must(t, k.Create(ctx, DeviceKey{Device: macA, PublicKey: []byte{2}, CreatedAt: t0})) // 删除后可重新登记
+
+		b := s.DeviceBlocks()
+		_, err = b.Get(ctx, macA)
+		wantErr(t, err, ErrNotFound)
+		must(t, b.Put(ctx, DeviceBlock{Device: macA, Reason: BlockLocked, CreatedAt: t0}))
+		must(t, b.Put(ctx, DeviceBlock{Device: macA, Reason: BlockRevoked, CreatedAt: t0.Add(time.Hour)}))
+		got, err := b.Get(ctx, macA)
+		must(t, err)
+		if got.Reason != BlockRevoked || !got.CreatedAt.Equal(roundMillis(t0)) && !got.CreatedAt.Equal(roundMillis(t0.Add(time.Hour))) {
+			t.Fatalf("got %+v", got)
+		}
+		must(t, b.Delete(ctx, macA))
+		must(t, b.Delete(ctx, macA))
+		_, err = b.Get(ctx, macA)
+		wantErr(t, err, ErrNotFound)
+	})
+}
+
 func TestFriendshipApprovalsFollowOrder(t *testing.T) {
 	run(t, func(t *testing.T, ctx context.Context, s Store) {
 		r := s.Friendships()

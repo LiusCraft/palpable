@@ -27,6 +27,7 @@
 | | [protocol](protocol.md) | `internal/protocol` | 设备协议 Go 类型与编解码 |
 | | [id](id.md) | `internal/id` | 跨模块标识类型 |
 | | [config](config.md) | `internal/config` | YAML 配置 |
+| 厂家后台 | [factory](factory.md) | `internal/factory` 等 | **独立进程**：设备从出厂到报废的台账、状态机、事件日志、运营人员 |
 | 前端 | [web](web.md) | `web/src` | 设备模拟器与演示展示 |
 | | [家长端小程序](miniprogram.md) | `miniprogram/` | 面向真实家长的微信小程序 |
 

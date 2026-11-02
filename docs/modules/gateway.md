@@ -19,6 +19,11 @@ type Handler interface {
     OnDisconnect(s *Session)
 }
 
+// 由 device.Registry 实现：厂家后台挂失或吊销的设备在这里被拒绝
+type Admission interface {
+    Admit(ctx, d DeviceID) error
+}
+
 // 由 device.Authenticator 实现
 type Authenticator interface {
     Required() bool
@@ -27,6 +32,7 @@ type Authenticator interface {
 
 func New(h Handler, checkOrigin func(*http.Request) bool) *Gateway
 func (g *Gateway) SetAuth(a Authenticator)       // nil 或 Required()==false 时不认证
+func (g *Gateway) SetAdmission(a Admission)      // 握手后、认证前决定能否连接；nil 不设准入
 func (g *Gateway) ServeHTTP(w, r)                // 升级并运行一个会话
 func (g *Gateway) Session(d id.DeviceID) (*Session, bool)
 
@@ -45,6 +51,8 @@ upgrade (CheckOrigin)
 deadline = now + 10s                       // 覆盖整个握手
 hello = readHello(deadline)                // 必须是 text 帧、合法 hello
     失败 → error{bad_message}，关闭
+if 设了准入 && Admit(mac) 失败:
+    error{unauthorized, "device not allowed"}，关闭        // 在认证之前：被封锁的设备不必再做签名
 if 认证开启:
     send hello.challenge{nonce}            // 32 字节随机数，每条连接一个
     proof = readText(deadline)             // 必须是 hello.proof

@@ -27,3 +27,11 @@ linx:
   api_base: https://xrobo.qiniu.com   # REST 地址
   ota_url: https://xrobo.qiniu.com/xiaozhi/ota/   # 激活预注册的设备
   voiceprint_base: ""   # 声纹服务地址（演示环境）
+
+# 与厂家后台（palpable-admin）的对接，见 docs/factory.md §5。令牌与密钥至少 16 位，不入库。
+# /internal/ 与 /ws 同端口，反向代理必须屏蔽 /internal/，只对后台所在内网开放。
+ops:
+  token: ""          # 非空才开放 /internal/devices/*，后台带它来调用
+  admin_url: ""      # 非空才向后台推送绑定/解绑事件，例如 http://127.0.0.1:8090
+  admin_token: ""    # 推送时带的令牌，等于后台的 inbound_token
+  owner_hmac_key: "" # 家长标识 → owner_ref 的 HMAC 密钥；admin_url 非空时必填，不得发给后台

@@ -22,6 +22,7 @@ var (
 type Store interface {
 	Devices() DeviceRepo
 	DeviceKeys() DeviceKeyRepo
+	DeviceBlocks() DeviceBlockRepo
 	Styles() StyleRepo
 	Guardians() GuardianRepo
 	Sessions() SessionRepo
@@ -67,7 +68,27 @@ type DeviceKey struct {
 
 type DeviceKeyRepo interface {
 	Get(ctx context.Context, d id.DeviceID) (DeviceKey, error)
-	Create(ctx context.Context, k DeviceKey) error // 已存在返回 ErrConflict
+	Create(ctx context.Context, k DeviceKey) error   // 已存在返回 ErrConflict
+	Delete(ctx context.Context, d id.DeviceID) error // 不存在也返回 nil
+}
+
+// 封锁原因。locked 可由厂家后台解除；revoked 是吊销，不可解除。
+const (
+	BlockLocked  = "locked"
+	BlockRevoked = "revoked"
+)
+
+type DeviceBlock struct {
+	Device    id.DeviceID
+	Reason    string
+	CreatedAt time.Time
+}
+
+// DeviceBlockRepo 记录被封锁的设备。
+type DeviceBlockRepo interface {
+	Put(ctx context.Context, b DeviceBlock) error                // 已存在则覆盖原因
+	Get(ctx context.Context, d id.DeviceID) (DeviceBlock, error) // 没有返回 ErrNotFound
+	Delete(ctx context.Context, d id.DeviceID) error             // 不存在也返回 nil
 }
 
 // Style 记录风格到灵矽智能体的映射；引导智能体的 ID 为 "welcome"，Skin 为空。
